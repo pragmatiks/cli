@@ -19,6 +19,8 @@ from pragma_sdk.provider import discover_resources
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from pragma_cli import get_client
+
 
 app = typer.Typer(help="Provider management commands")
 console = Console()
@@ -316,7 +318,11 @@ def push(
 
     console.print(f"[green]Created tarball:[/green] {len(tarball) / 1024:.1f} KB")
 
-    client = PragmaClient(require_auth=True)
+    client = get_client()
+
+    if client._auth is None:
+        console.print("[red]Error:[/red] Authentication required. Run 'pragma login' first.")
+        raise typer.Exit(1)
 
     try:
         push_result = _upload_code(client, provider_id, tarball)
@@ -341,8 +347,6 @@ def push(
             raise
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
-    finally:
-        client.close()
 
 
 def _upload_code(client: PragmaClient, provider_id: str, tarball: bytes) -> PushResult:
@@ -550,7 +554,7 @@ def sync(
         typer.echo("Dry run - no changes made.")
         raise typer.Exit(0)
 
-    client = PragmaClient()
+    client = get_client()
 
     for (provider, resource_name), resource_class in resources.items():
         try:

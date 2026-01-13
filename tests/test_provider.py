@@ -34,9 +34,10 @@ def template_path(monkeypatch):
 
 @pytest.fixture
 def mock_pragma_client(mocker: MockerFixture):
-    """Mock PragmaClient for testing."""
+    """Mock get_client for testing."""
     mock_client = mocker.Mock()
-    mocker.patch("pragma_cli.commands.provider.PragmaClient", return_value=mock_client)
+    mock_client._auth = mocker.Mock()  # Simulate authenticated client
+    mocker.patch("pragma_cli.commands.provider.get_client", return_value=mock_client)
     return mock_client
 
 
