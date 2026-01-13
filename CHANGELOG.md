@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.2.0 (2026-01-13)
+
+### Feat
+
+- add PyPI publishing and rename to pragmatiks-cli
+
+### Fix
+
+- **deps**: update pragmatiks-sdk to v0.2.1
+
 ## v0.1.0 (2025-01-13)
 
 ### Features
