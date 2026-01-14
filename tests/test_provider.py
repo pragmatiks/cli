@@ -1,11 +1,12 @@
 """Tests for CLI provider commands."""
 
 import tarfile
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 
 import pytest
-from pragma_sdk import BuildResult, BuildStatus, DeploymentResult, DeploymentStatus, PushResult
+from pragma_sdk import BuildInfo, BuildResult, BuildStatus, DeploymentResult, DeploymentStatus, ProviderInfo, PushResult
 from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
@@ -321,3 +322,298 @@ def test_detect_provider_package_returns_none_without_pyproject(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     result = detect_provider_package()
     assert result is None
+
+
+def test_rollback_with_explicit_version(cli_runner, mock_pragma_client):
+    """Rollback deploys the specified version."""
+    mock_pragma_client.rollback_provider.return_value = DeploymentResult(
+        deployment_name="provider-test",
+        status=DeploymentStatus.PROGRESSING,
+        message="Deployment started",
+    )
+
+    result = cli_runner.invoke(
+        app, ["provider", "rollback", "test", "--version", "20250114.120000"]
+    )
+
+    assert result.exit_code == 0
+    assert "Rolling back provider: test" in result.output
+    assert "Target version: 20250114.120000" in result.output
+    assert "Rollback initiated:" in result.output
+    mock_pragma_client.rollback_provider.assert_called_once_with("test", "20250114.120000")
+
+
+def test_rollback_without_version_finds_previous(cli_runner, mock_pragma_client):
+    """Rollback without version finds the second-most-recent successful build."""
+    mock_pragma_client.list_builds.return_value = [
+        BuildInfo(
+            provider_id="test",
+            version="20250114.150000",
+            status=BuildStatus.SUCCESS,
+            created_at=datetime(2025, 1, 14, 15, 0, 0),
+        ),
+        BuildInfo(
+            provider_id="test",
+            version="20250114.120000",
+            status=BuildStatus.SUCCESS,
+            created_at=datetime(2025, 1, 14, 12, 0, 0),
+        ),
+    ]
+    mock_pragma_client.rollback_provider.return_value = DeploymentResult(
+        deployment_name="provider-test",
+        status=DeploymentStatus.PROGRESSING,
+        message="Deployment started",
+    )
+
+    result = cli_runner.invoke(app, ["provider", "rollback", "test"])
+
+    assert result.exit_code == 0
+    assert "Target version: 20250114.120000" in result.output
+    mock_pragma_client.rollback_provider.assert_called_once_with("test", "20250114.120000")
+
+
+def test_rollback_without_version_fails_if_no_previous_build(cli_runner, mock_pragma_client):
+    """Rollback without version fails if only one successful build exists."""
+    mock_pragma_client.list_builds.return_value = [
+        BuildInfo(
+            provider_id="test",
+            version="20250114.150000",
+            status=BuildStatus.SUCCESS,
+            created_at=datetime(2025, 1, 14, 15, 0, 0),
+        ),
+    ]
+
+    result = cli_runner.invoke(app, ["provider", "rollback", "test"])
+
+    assert result.exit_code == 1
+    assert "No previous successful build found" in result.output
+    mock_pragma_client.rollback_provider.assert_not_called()
+
+
+def test_rollback_skips_failed_builds_when_finding_previous(cli_runner, mock_pragma_client):
+    """Rollback skips failed builds when finding previous version."""
+    mock_pragma_client.list_builds.return_value = [
+        BuildInfo(
+            provider_id="test",
+            version="20250114.160000",
+            status=BuildStatus.SUCCESS,
+            created_at=datetime(2025, 1, 14, 16, 0, 0),
+        ),
+        BuildInfo(
+            provider_id="test",
+            version="20250114.150000",
+            status=BuildStatus.FAILED,
+            error_message="Build error",
+            created_at=datetime(2025, 1, 14, 15, 0, 0),
+        ),
+        BuildInfo(
+            provider_id="test",
+            version="20250114.120000",
+            status=BuildStatus.SUCCESS,
+            created_at=datetime(2025, 1, 14, 12, 0, 0),
+        ),
+    ]
+    mock_pragma_client.rollback_provider.return_value = DeploymentResult(
+        deployment_name="provider-test",
+        status=DeploymentStatus.PROGRESSING,
+        message="Deployment started",
+    )
+
+    result = cli_runner.invoke(app, ["provider", "rollback", "test"])
+
+    assert result.exit_code == 0
+    assert "Target version: 20250114.120000" in result.output
+    mock_pragma_client.rollback_provider.assert_called_once_with("test", "20250114.120000")
+
+
+def test_rollback_fails_if_version_not_found(cli_runner, mock_pragma_client):
+    """Rollback fails if specified version doesn't exist."""
+    import httpx
+
+    mock_pragma_client.rollback_provider.side_effect = httpx.HTTPStatusError(
+        "404 Not Found",
+        request=httpx.Request("POST", "http://localhost:8000/providers/test/rollback"),
+        response=httpx.Response(404, json={"detail": "Build not found: test@20250101.000000"}),
+    )
+
+    result = cli_runner.invoke(
+        app, ["provider", "rollback", "test", "--version", "20250101.000000"]
+    )
+
+    assert result.exit_code == 1
+    assert "Build not found" in result.output
+
+
+def test_rollback_fails_if_build_not_deployable(cli_runner, mock_pragma_client):
+    """Rollback fails if build status is not SUCCESS."""
+    import httpx
+
+    mock_pragma_client.rollback_provider.side_effect = httpx.HTTPStatusError(
+        "400 Bad Request",
+        request=httpx.Request("POST", "http://localhost:8000/providers/test/rollback"),
+        response=httpx.Response(400, json={"detail": "Build 20250114.120000 is not deployable (status: failed)"}),
+    )
+
+    result = cli_runner.invoke(
+        app, ["provider", "rollback", "test", "--version", "20250114.120000"]
+    )
+
+    assert result.exit_code == 1
+    assert "not deployable" in result.output
+
+
+def test_status_displays_deployment_info(cli_runner, mock_pragma_client):
+    """Status command displays deployment information."""
+    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
+        deployment_name="provider-test-abc12345",
+        status=DeploymentStatus.AVAILABLE,
+        available_replicas=2,
+        ready_replicas=2,
+        image="europe-west4-docker.pkg.dev/project/repo/test:20250114.153045",
+        updated_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
+        message="Deployment has minimum availability",
+    )
+
+    result = cli_runner.invoke(app, ["provider", "status", "test"])
+
+    assert result.exit_code == 0
+    assert "Provider:" in result.output
+    assert "test" in result.output
+    assert "available" in result.output
+    assert "2 available / 2 ready" in result.output
+    assert "20250114.153045" in result.output
+    assert "2025-01-14" in result.output
+
+
+def test_status_handles_not_found(cli_runner, mock_pragma_client):
+    """Status command handles deployment not found."""
+    import httpx
+
+    mock_response = httpx.Response(404, json={"detail": "Deployment not found"})
+    mock_pragma_client.get_deployment_status.side_effect = httpx.HTTPStatusError(
+        "Not found", request=httpx.Request("GET", "http://test"), response=mock_response
+    )
+
+    result = cli_runner.invoke(app, ["provider", "status", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "Deployment not found" in result.output
+
+
+def test_status_handles_progressing_deployment(cli_runner, mock_pragma_client):
+    """Status command shows progressing status correctly."""
+    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
+        deployment_name="provider-test-abc12345",
+        status=DeploymentStatus.PROGRESSING,
+        available_replicas=1,
+        ready_replicas=1,
+        image="europe-west4-docker.pkg.dev/project/repo/test:20250114.160000",
+        message="ReplicaSet is progressing",
+    )
+
+    result = cli_runner.invoke(app, ["provider", "status", "test"])
+
+    assert result.exit_code == 0
+    assert "progressing" in result.output
+    assert "1 available / 1 ready" in result.output
+
+
+def test_status_handles_failed_deployment(cli_runner, mock_pragma_client):
+    """Status command shows failed status with error message."""
+    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
+        deployment_name="provider-test-abc12345",
+        status=DeploymentStatus.FAILED,
+        available_replicas=0,
+        ready_replicas=0,
+        message="ProgressDeadlineExceeded",
+    )
+
+    result = cli_runner.invoke(app, ["provider", "status", "test"])
+
+    assert result.exit_code == 0
+    assert "failed" in result.output
+    assert "0 available / 0 ready" in result.output
+    assert "ProgressDeadlineExceeded" in result.output
+
+
+def test_list_providers_displays_table(cli_runner, mock_pragma_client):
+    """List command displays providers in a formatted table."""
+    mock_pragma_client.list_providers.return_value = [
+        ProviderInfo(
+            provider_id="postgres",
+            current_version="20250114.120000",
+            deployment_status=DeploymentStatus.AVAILABLE,
+            updated_at=datetime(2025, 1, 14, 12, 0, 0),
+        ),
+        ProviderInfo(
+            provider_id="redis",
+            current_version="20250114.100000",
+            deployment_status=DeploymentStatus.PROGRESSING,
+            updated_at=datetime(2025, 1, 14, 10, 0, 0),
+        ),
+    ]
+
+    result = cli_runner.invoke(app, ["provider", "list"])
+
+    assert result.exit_code == 0
+    assert "postgres" in result.output
+    assert "20250114.120000" in result.output
+    assert "running" in result.output
+    assert "redis" in result.output
+    assert "deploying" in result.output
+
+
+def test_list_providers_handles_empty_list(cli_runner, mock_pragma_client):
+    """List command shows message when no providers exist."""
+    mock_pragma_client.list_providers.return_value = []
+
+    result = cli_runner.invoke(app, ["provider", "list"])
+
+    assert result.exit_code == 0
+    assert "No providers found" in result.output
+
+
+def test_list_providers_handles_not_deployed(cli_runner, mock_pragma_client):
+    """List command shows 'not deployed' for providers without deployments."""
+    mock_pragma_client.list_providers.return_value = [
+        ProviderInfo(
+            provider_id="test",
+            current_version=None,
+            deployment_status=None,
+            updated_at=None,
+        ),
+    ]
+
+    result = cli_runner.invoke(app, ["provider", "list"])
+
+    assert result.exit_code == 0
+    assert "test" in result.output
+    assert "not deployed" in result.output or "never deployed" in result.output
+
+
+def test_list_providers_requires_auth(cli_runner, mock_pragma_client):
+    """List command fails without authentication."""
+    mock_pragma_client._auth = None
+
+    result = cli_runner.invoke(app, ["provider", "list"])
+
+    assert result.exit_code == 1
+    assert "Authentication required" in result.output
+
+
+def test_list_providers_handles_failed_status(cli_runner, mock_pragma_client):
+    """List command shows failed status for providers with failed deployments."""
+    mock_pragma_client.list_providers.return_value = [
+        ProviderInfo(
+            provider_id="broken",
+            current_version="20250114.120000",
+            deployment_status=DeploymentStatus.FAILED,
+            updated_at=datetime(2025, 1, 14, 12, 0, 0),
+        ),
+    ]
+
+    result = cli_runner.invoke(app, ["provider", "list"])
+
+    assert result.exit_code == 0
+    assert "broken" in result.output
+    assert "failed" in result.output

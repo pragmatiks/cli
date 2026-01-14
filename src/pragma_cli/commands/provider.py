@@ -14,7 +14,17 @@ from typing import Annotated
 import copier
 import httpx
 import typer
-from pragma_sdk import BuildResult, BuildStatus, Config, PragmaClient, ProviderDeleteResult, PushResult, Resource
+from pragma_sdk import (
+    BuildResult,
+    BuildStatus,
+    Config,
+    DeploymentStatus,
+    PragmaClient,
+    ProviderDeleteResult,
+    ProviderInfo,
+    PushResult,
+    Resource,
+)
 from pragma_sdk.provider import discover_resources
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
@@ -106,6 +116,102 @@ def get_template_source() -> str:
         return str(local_template)
 
     return DEFAULT_TEMPLATE_URL
+
+
+@app.command("list")
+def list_providers():
+    """List all deployed providers.
+
+    Shows providers with their deployment status. Displays:
+    - Provider ID
+    - Deployed version
+    - Status (running/stopped)
+    - Last deployed timestamp
+
+    Example:
+        pragma provider list
+
+    Raises:
+        typer.Exit: If authentication is missing or API call fails.
+    """
+    client = get_client()
+
+    if client._auth is None:
+        console.print("[red]Error:[/red] Authentication required. Run 'pragma auth login' first.")
+        raise typer.Exit(1)
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Fetching providers...", total=None)
+            providers = client.list_providers()
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    if not providers:
+        console.print("[dim]No providers found.[/dim]")
+        return
+
+    _print_providers_table(providers)
+
+
+def _print_providers_table(providers: list[ProviderInfo]) -> None:
+    """Print providers in a formatted table.
+
+    Args:
+        providers: List of ProviderInfo to display.
+    """
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Provider ID")
+    table.add_column("Version")
+    table.add_column("Status")
+    table.add_column("Last Deployed")
+
+    for provider in providers:
+        status = _format_deployment_status(provider.deployment_status)
+        version = provider.current_version or "[dim]never deployed[/dim]"
+        updated = (
+            provider.updated_at.strftime("%Y-%m-%d %H:%M:%S")
+            if provider.updated_at
+            else "[dim]-[/dim]"
+        )
+
+        table.add_row(provider.provider_id, version, status, updated)
+
+    console.print(table)
+
+
+def _format_deployment_status(status: DeploymentStatus | None) -> str:
+    """Format deployment status with color coding.
+
+    Args:
+        status: Deployment status or None if not deployed.
+
+    Returns:
+        Formatted status string with Rich markup.
+    """
+    if status is None:
+        return "[dim]not deployed[/dim]"
+
+    match status:
+        case DeploymentStatus.AVAILABLE:
+            return "[green]running[/green]"
+        case DeploymentStatus.PROGRESSING:
+            return "[yellow]deploying[/yellow]"
+        case DeploymentStatus.PENDING:
+            return "[yellow]pending[/yellow]"
+        case DeploymentStatus.FAILED:
+            return "[red]failed[/red]"
+        case _:
+            return f"[dim]{status}[/dim]"
 
 
 @app.command()
@@ -782,3 +888,278 @@ def _print_delete_result(result: ProviderDeleteResult) -> None:
     table.add_row("NATS Consumer", "Deleted" if result.consumer_deleted else "Not found")
 
     console.print(table)
+
+
+@app.command()
+def rollback(
+    provider_id: Annotated[
+        str,
+        typer.Argument(help="Provider ID to rollback (e.g., 'postgres', 'my-provider')"),
+    ],
+    version: Annotated[
+        str | None,
+        typer.Option("--version", "-v", help="Target version to rollback to (default: previous successful build)"),
+    ] = None,
+):
+    """Rollback a provider to a previous version.
+
+    Redeploys a previously successful build. If no version is specified,
+    rolls back to the previous successful version.
+
+    Rollback to specific version:
+        pragma provider rollback my-provider --version 20250114.120000
+
+    Rollback to previous version:
+        pragma provider rollback my-provider
+
+    Example:
+        pragma provider rollback postgres --version 20250114.120000
+        pragma provider rollback postgres -v 20250114.120000
+        pragma provider rollback postgres
+
+    Raises:
+        typer.Exit: If rollback fails or no suitable version found.
+    """
+    client = get_client()
+
+    if client._auth is None:
+        console.print("[red]Error:[/red] Authentication required. Run 'pragma login' first.")
+        raise typer.Exit(1)
+
+    try:
+        target_version = version
+        if target_version is None:
+            target_version = _find_previous_version(client, provider_id)
+
+        console.print(f"[bold]Rolling back provider:[/bold] {provider_id}")
+        console.print(f"[dim]Target version:[/dim] {target_version}")
+        console.print()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Deploying previous version...", total=None)
+            result = client.rollback_provider(provider_id, target_version)
+
+        console.print(f"[green]Rollback initiated:[/green] {result.deployment_name}")
+        console.print(f"[dim]Status:[/dim] {result.status.value}")
+
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            detail = e.response.json().get("detail", "Build not found")
+            console.print(f"[red]Error:[/red] {detail}")
+        elif e.response.status_code == 400:
+            detail = e.response.json().get("detail", "Build not deployable")
+            console.print(f"[red]Error:[/red] {detail}")
+        else:
+            console.print(f"[red]Error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+def _find_previous_version(client: PragmaClient, provider_id: str) -> str:
+    """Find the previous successful version for rollback.
+
+    Gets the build history and finds the second-most-recent successful build,
+    which represents the version before the current deployment.
+
+    Args:
+        client: SDK client instance.
+        provider_id: Provider identifier.
+
+    Returns:
+        CalVer version string of the previous successful build.
+
+    Raises:
+        ValueError: If no previous successful build exists.
+    """
+    builds = client.list_builds(provider_id)
+    successful_builds = [b for b in builds if b.status == BuildStatus.SUCCESS]
+
+    if len(successful_builds) < 2:
+        raise ValueError(
+            f"No previous successful build found for provider '{provider_id}'. "
+            "Specify a version explicitly with --version."
+        )
+
+    return successful_builds[1].version
+
+
+@app.command()
+def status(
+    provider_id: Annotated[
+        str,
+        typer.Argument(help="Provider ID to check status (e.g., 'postgres', 'my-provider')"),
+    ],
+):
+    """Check the deployment status of a provider.
+
+    Displays:
+    - Deployment status (pending/progressing/available/failed)
+    - Replica count (available/ready)
+    - Current image version
+    - Last updated timestamp
+
+    Example:
+        pragma provider status postgres
+        pragma provider status my-provider
+
+    Raises:
+        typer.Exit: If deployment not found or status check fails.
+    """
+    client = get_client()
+
+    if client._auth is None:
+        console.print("[red]Error:[/red] Authentication required. Run 'pragma login' first.")
+        raise typer.Exit(1)
+
+    try:
+        result = client.get_deployment_status(provider_id)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            console.print(f"[red]Error:[/red] Deployment not found for provider: {provider_id}")
+        else:
+            console.print(f"[red]Error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    _print_deployment_status(provider_id, result)
+
+
+def _print_deployment_status(provider_id: str, result) -> None:
+    """Print deployment status in a formatted table.
+
+    Args:
+        provider_id: Provider identifier.
+        result: DeploymentResult from the API.
+    """
+    status_colors = {
+        "pending": "yellow",
+        "progressing": "cyan",
+        "available": "green",
+        "failed": "red",
+    }
+    status_color = status_colors.get(result.status.value, "white")
+
+    console.print()
+    console.print(f"[bold]Provider:[/bold] {provider_id}")
+    console.print()
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Property")
+    table.add_column("Value")
+
+    table.add_row("Status", f"[{status_color}]{result.status.value}[/{status_color}]")
+    table.add_row("Replicas", f"{result.available_replicas} available / {result.ready_replicas} ready")
+
+    if result.image:
+        version = result.image.split(":")[-1] if ":" in result.image else "unknown"
+        table.add_row("Version", version)
+        table.add_row("Image", f"[dim]{result.image}[/dim]")
+
+    if result.updated_at:
+        table.add_row("Updated", result.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+
+    if result.message:
+        table.add_row("Message", result.message)
+
+    console.print(table)
+
+
+@app.command()
+def builds(
+    provider_id: Annotated[
+        str,
+        typer.Argument(help="Provider ID to list builds for (e.g., 'postgres', 'my-provider')"),
+    ],
+):
+    """List build history for a provider.
+
+    Shows the last 10 builds ordered by creation time (newest first).
+    Useful for selecting versions for rollback and verifying build status.
+
+    Example:
+        pragma provider builds postgres
+        pragma provider builds my-provider
+
+    Raises:
+        typer.Exit: If request fails.
+    """
+    client = get_client()
+
+    if client._auth is None:
+        console.print("[red]Error:[/red] Authentication required. Run 'pragma login' first.")
+        raise typer.Exit(1)
+
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+            transient=True,
+        ) as progress:
+            progress.add_task("Fetching builds...", total=None)
+            build_list = client.list_builds(provider_id)
+
+        if not build_list:
+            console.print(f"[dim]No builds found for provider:[/dim] {provider_id}")
+            raise typer.Exit(0)
+
+        console.print(f"[bold]Builds for provider:[/bold] {provider_id}")
+        console.print()
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Version")
+        table.add_column("Status")
+        table.add_column("Created")
+        table.add_column("Error")
+
+        for build in build_list:
+            status_color = _get_build_status_color(build.status)
+            error_display = (
+                build.error_message[:50] + "..."
+                if build.error_message and len(build.error_message) > 50
+                else (build.error_message or "-")
+            )
+            table.add_row(
+                build.version,
+                f"[{status_color}]{build.status.value}[/{status_color}]",
+                build.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                error_display,
+            )
+
+        console.print(table)
+
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {e.response.text}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+def _get_build_status_color(status: BuildStatus) -> str:
+    """Get the color for a build status.
+
+    Args:
+        status: Build status enum value.
+
+    Returns:
+        Rich color name for the status.
+    """
+    return {
+        BuildStatus.PENDING: "yellow",
+        BuildStatus.BUILDING: "blue",
+        BuildStatus.SUCCESS: "green",
+        BuildStatus.FAILED: "red",
+    }.get(status, "white")
