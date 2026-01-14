@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.0 (2026-01-14)
+
+### Feat
+
+- add provider delete command with lifecycle cleanup
+
 ## v0.3.0 (2026-01-14)
 
 ### Feat
