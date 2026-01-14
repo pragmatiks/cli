@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.5.0 (2026-01-14)
+
+### Feat
+
+- **provider**: add list, rollback, status, and builds commands
+
+### Fix
+
+- **deps**: update pragmatiks-sdk to v0.5.0
+
 ## v0.4.1 (2026-01-14)
 
 ### Fix
