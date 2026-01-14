@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.3.0 (2026-01-14)
+
+### Feat
+
+- add provider deploy command and use workspace SDK
+
 ## v0.2.3 (2026-01-13)
 
 ### Fix
