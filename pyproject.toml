@@ -16,7 +16,9 @@ dependencies = [
 pragma = "pragma_cli.main:app"
 
 [tool.uv.sources]
-pragmatiks-sdk = { git = "https://github.com/pragmatiks/sdk.git", tag = "v0.3.1" }
+# In workspace: resolved from local packages/sdk
+# Standalone: falls back to PyPI (pragmatiks-sdk)
+pragmatiks-sdk = { workspace = true }
 
 [tool.ruff]
 target-version = "py313"

@@ -498,6 +498,55 @@ def _deploy_provider(client: PragmaClient, provider_id: str, image: str) -> None
 
 
 @app.command()
+def deploy(
+    image: Annotated[
+        str,
+        typer.Option("--image", "-i", help="Container image to deploy (required)"),
+    ],
+    package: Annotated[
+        str | None,
+        typer.Option("--package", "-p", help="Provider package name (auto-detected if not specified)"),
+    ] = None,
+):
+    """Deploy a provider from a built container image.
+
+    Deploys a provider image to Kubernetes. Use after 'pragma provider push'
+    completes successfully, or to redeploy/rollback to a specific version.
+
+    Example:
+        pragma provider deploy --image europe-west4-docker.pkg.dev/project/repo/provider:tag
+        pragma provider deploy -i provider:latest --package my_provider
+
+    Raises:
+        typer.Exit: If deployment fails.
+    """
+    provider_name = package or detect_provider_package()
+
+    if not provider_name:
+        console.print("[red]Error:[/red] Could not detect provider package.")
+        console.print("Run from a provider directory or specify --package")
+        raise typer.Exit(1)
+
+    provider_id = provider_name.replace("_", "-").removesuffix("-provider")
+
+    console.print(f"[bold]Deploying provider:[/bold] {provider_id}")
+    console.print(f"[dim]Image:[/dim] {image}")
+    console.print()
+
+    client = get_client()
+
+    if client._auth is None:
+        console.print("[red]Error:[/red] Authentication required. Run 'pragma auth login' first.")
+        raise typer.Exit(1)
+
+    try:
+        _deploy_provider(client, provider_id, image)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(1)
+
+
+@app.command()
 def sync(
     package: Annotated[
         str | None,
