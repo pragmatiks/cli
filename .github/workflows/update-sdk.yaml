@@ -41,7 +41,7 @@ jobs:
           sed -i "s|tag = \"v.*\"|tag = \"v${SDK_VERSION}\"|" pyproject.toml
 
       - name: Update lockfile
-        run: uv sync --all-groups
+        run: uv sync --no-sources --all-groups
 
       - name: Commit and push
         run: |
