@@ -2,17 +2,17 @@
   <img src="assets/wordmark.png" alt="Pragmatiks" width="800">
 </p>
 
-# Pragmatiks CLI
+# Pragma CLI
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/pragmatiks/cli)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/pragmatiks/pragma-cli)
 [![PyPI version](https://img.shields.io/pypi/v/pragmatiks-cli.svg)](https://pypi.org/project/pragmatiks-cli/)
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-**[Documentation](https://docs.pragmatiks.io/cli/overview)** | **[SDK](https://github.com/pragmatiks/sdk)** | **[Providers](https://github.com/pragmatiks/providers)**
+**[Documentation](https://docs.pragmatiks.io/cli/overview)** | **[SDK](https://github.com/pragmatiks/pragma-sdk)** | **[Providers](https://github.com/pragmatiks/pragma-providers)**
 
-Command-line interface for managing Pragmatiks resources.
+Command-line interface for managing pragma-os resources.
 
 ## Quick Start
 
