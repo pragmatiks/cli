@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.6.0 (2026-01-15)
+
+### Feat
+
+- **cli**: show user info in whoami command
+
 ## v0.5.3 (2026-01-15)
 
 ### Refactor
