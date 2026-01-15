@@ -431,10 +431,10 @@ def push(
         if not wait:
             console.print()
             console.print("[dim]Build running in background. Check status with:[/dim]")
-            console.print(f"  pragma providers status {provider_id} --job {push_result.job_name}")
+            console.print(f"  pragma providers builds {provider_id} {push_result.version}")
             return
 
-        _wait_for_build(client, provider_id, push_result.job_name, logs)
+        _wait_for_build(client, provider_id, push_result.version, logs)
 
         if deploy:
             console.print()
@@ -455,7 +455,7 @@ def _upload_code(client: PragmaClient, provider_id: str, tarball: bytes) -> Push
         tarball: Gzipped tarball bytes of provider source.
 
     Returns:
-        PushResult with build job details.
+        PushResult with build details including version.
     """
     with Progress(
         SpinnerColumn(),
@@ -466,14 +466,14 @@ def _upload_code(client: PragmaClient, provider_id: str, tarball: bytes) -> Push
         progress.add_task("Uploading code...", total=None)
         push_result = client.push_provider(provider_id, tarball)
 
-    console.print(f"[green]Build started:[/green] {push_result.job_name}")
+    console.print(f"[green]Build started:[/green] {push_result.version}")
     return push_result
 
 
 def _wait_for_build(
     client: PragmaClient,
     provider_id: str,
-    job_name: str,
+    version: str,
     logs: bool,
 ) -> BuildResult:
     """Wait for build to complete, optionally streaming logs.
@@ -481,7 +481,7 @@ def _wait_for_build(
     Args:
         client: SDK client instance.
         provider_id: Provider identifier.
-        job_name: Build job name.
+        version: CalVer version string.
         logs: Whether to stream build logs.
 
     Returns:
@@ -491,17 +491,17 @@ def _wait_for_build(
         typer.Exit: On build failure or timeout.
     """
     if logs:
-        _stream_build_logs(client, provider_id, job_name)
+        _stream_build_logs(client, provider_id, version)
     else:
-        build_result = _poll_build_status(client, provider_id, job_name)
+        build_result = _poll_build_status(client, provider_id, version)
 
         if build_result.status == BuildStatus.FAILED:
             console.print(f"[red]Build failed:[/red] {build_result.error_message}")
             raise typer.Exit(1)
 
-        console.print(f"[green]Build successful:[/green] {build_result.image}")
+        console.print(f"[green]Build successful:[/green] {build_result.version}")
 
-    final_build = client.get_build_status(provider_id, job_name)
+    final_build = client.get_build_status(provider_id, version)
 
     if final_build.status != BuildStatus.SUCCESS:
         console.print(f"[red]Build failed:[/red] {final_build.error_message}")
@@ -510,13 +510,13 @@ def _wait_for_build(
     return final_build
 
 
-def _poll_build_status(client: PragmaClient, provider_id: str, job_name: str) -> BuildResult:
+def _poll_build_status(client: PragmaClient, provider_id: str, version: str) -> BuildResult:
     """Poll build status until completion or timeout.
 
     Args:
         client: SDK client instance.
         provider_id: Provider identifier.
-        job_name: Build job name.
+        version: CalVer version string.
 
     Returns:
         Final BuildResult.
@@ -535,7 +535,7 @@ def _poll_build_status(client: PragmaClient, provider_id: str, job_name: str) ->
         task = progress.add_task("Building...", total=None)
 
         while True:
-            build_result = client.get_build_status(provider_id, job_name)
+            build_result = client.get_build_status(provider_id, version)
 
             if build_result.status in (BuildStatus.SUCCESS, BuildStatus.FAILED):
                 return build_result
@@ -549,26 +549,26 @@ def _poll_build_status(client: PragmaClient, provider_id: str, job_name: str) ->
             time.sleep(BUILD_POLL_INTERVAL)
 
 
-def _stream_build_logs(client: PragmaClient, provider_id: str, job_name: str) -> None:
+def _stream_build_logs(client: PragmaClient, provider_id: str, version: str) -> None:
     """Stream build logs to console.
 
     Args:
         client: SDK client instance.
         provider_id: Provider identifier.
-        job_name: Build job name.
+        version: CalVer version string.
     """
     console.print()
     console.print("[bold]Build logs:[/bold]")
     console.print("-" * 40)
 
     try:
-        with client.stream_build_logs(provider_id, job_name) as response:
+        with client.stream_build_logs(provider_id, version) as response:
             for line in response.iter_lines():
                 console.print(line)
     except httpx.HTTPError as e:
         console.print(f"[yellow]Warning:[/yellow] Could not stream logs: {e}")
         console.print("[dim]Falling back to polling...[/dim]")
-        _poll_build_status(client, provider_id, job_name)
+        _poll_build_status(client, provider_id, version)
 
     console.print("-" * 40)
 
@@ -590,7 +590,7 @@ def _deploy_provider(client: PragmaClient, provider_id: str, version: str | None
         progress.add_task("Deploying...", total=None)
         deploy_result = client.deploy_provider(provider_id, version)
 
-    console.print(f"[green]Deployment started:[/green] {deploy_result.deployment_name}")
+    console.print(f"[green]Deployment started:[/green] {provider_id}")
     console.print(f"[dim]Version:[/dim] {deploy_result.version}")
     console.print(f"[dim]Status:[/dim] {deploy_result.status.value}")
 

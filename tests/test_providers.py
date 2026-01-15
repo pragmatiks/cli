@@ -9,7 +9,6 @@ import pytest
 from pragma_sdk import (
     BuildResult,
     BuildStatus,
-    DeploymentResult,
     DeploymentStatus,
     ProviderInfo,
     ProviderStatus,
@@ -129,12 +128,11 @@ def test_push_uploads_tarball_and_polls_status(cli_runner, provider_project, moc
     """Push creates tarball, uploads to API, and polls for completion."""
     mock_pragma_client.push_provider.return_value = PushResult(
         version="20250114.153045",
-        job_name="build-test-abc12345",
         status=BuildStatus.PENDING,
         message="Build started",
     )
     mock_pragma_client.get_build_status.return_value = BuildResult(
-        job_name="build-test-abc12345",
+        version="20250114.153045",
         status=BuildStatus.SUCCESS,
         image="registry.local/test:abc123",
     )
@@ -157,20 +155,19 @@ def test_push_with_deploy_flag_deploys_after_build(cli_runner, provider_project,
     """Push with --deploy deploys after successful build."""
     mock_pragma_client.push_provider.return_value = PushResult(
         version="20250114.153045",
-        job_name="build-test-abc12345",
         status=BuildStatus.PENDING,
         message="Build started",
     )
     mock_pragma_client.get_build_status.return_value = BuildResult(
-        job_name="build-test-abc12345",
+        version="20250114.153045",
         status=BuildStatus.SUCCESS,
         image="registry.local/test:abc123",
     )
-    mock_pragma_client.deploy_provider.return_value = DeploymentResult(
-        deployment_name="provider-test",
+    mock_pragma_client.deploy_provider.return_value = ProviderStatus(
         status=DeploymentStatus.PROGRESSING,
         version="20250114.153045",
-        message="Deployment started",
+        updated_at=None,
+        healthy=False,
     )
 
     result = cli_runner.invoke(app, ["providers", "push", "--deploy"])
@@ -185,7 +182,6 @@ def test_push_with_no_wait_returns_immediately(cli_runner, provider_project, moc
     """Push with --no-wait returns immediately after upload."""
     mock_pragma_client.push_provider.return_value = PushResult(
         version="20250114.153045",
-        job_name="build-test-abc12345",
         status=BuildStatus.PENDING,
         message="Build started",
     )
@@ -201,12 +197,11 @@ def test_push_handles_build_failure(cli_runner, provider_project, mock_pragma_cl
     """Push handles build failures gracefully."""
     mock_pragma_client.push_provider.return_value = PushResult(
         version="20250114.153045",
-        job_name="build-test-abc12345",
         status=BuildStatus.PENDING,
         message="Build started",
     )
     mock_pragma_client.get_build_status.return_value = BuildResult(
-        job_name="build-test-abc12345",
+        version="20250114.153045",
         status=BuildStatus.FAILED,
         error_message="Dockerfile syntax error",
     )
@@ -225,12 +220,11 @@ def test_push_with_package_option_uses_specified_name(cli_runner, tmp_path, mock
 
     mock_pragma_client.push_provider.return_value = PushResult(
         version="20250114.153045",
-        job_name="build-custom-abc12345",
         status=BuildStatus.PENDING,
         message="Build started",
     )
     mock_pragma_client.get_build_status.return_value = BuildResult(
-        job_name="build-custom-abc12345",
+        version="20250114.153045",
         status=BuildStatus.SUCCESS,
         image="registry.local/custom:abc123",
     )
