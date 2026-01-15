@@ -49,6 +49,31 @@ def completion_provider_ids(incomplete: str):
             yield provider.provider_id
 
 
+def completion_provider_versions(ctx: typer.Context, incomplete: str):
+    """Complete provider versions based on available builds.
+
+    Args:
+        ctx: Typer context containing parsed parameters including provider_id.
+        incomplete: Partial input to complete against available versions.
+
+    Yields:
+        Version strings matching the incomplete input.
+    """
+    client = _get_completion_client()
+    if client is None:
+        return
+    provider_id = ctx.params.get("provider_id")
+    if not provider_id:
+        return
+    try:
+        builds = client.list_builds(provider_id)
+    except Exception:
+        return
+    for build in builds:
+        if build.version.startswith(incomplete):
+            yield build.version
+
+
 def completion_resource_ids(incomplete: str):
     """Complete resource identifiers in provider/resource format based on existing resources.
 

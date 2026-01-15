@@ -28,7 +28,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from pragma_cli import get_client
-from pragma_cli.commands.completions import completion_provider_ids
+from pragma_cli.commands.completions import completion_provider_ids, completion_provider_versions
 
 
 app = typer.Typer(help="Provider management commands")
@@ -599,13 +599,19 @@ def _deploy_provider(
 
 @app.command()
 def deploy(
+    provider_id: Annotated[
+        str,
+        typer.Argument(
+            help="Provider ID to deploy (e.g., 'postgres', 'my-provider')",
+            autocompletion=completion_provider_ids,
+        ),
+    ],
     version: Annotated[
         str | None,
-        typer.Option("--version", "-v", help="Version to deploy (e.g., 20250115.120000). Defaults to latest."),
-    ] = None,
-    package: Annotated[
-        str | None,
-        typer.Option("--package", "-p", help="Provider package name (auto-detected if not specified)"),
+        typer.Argument(
+            help="Version to deploy (e.g., 20250115.120000). Defaults to latest.",
+            autocompletion=completion_provider_versions,
+        ),
     ] = None,
 ):
     """Deploy a provider to a specific version.
@@ -614,23 +620,14 @@ def deploy(
     the latest successful build. Use 'pragma providers builds' to see available versions.
 
     Deploy latest:
-        pragma providers deploy
+        pragma providers deploy postgres
 
     Deploy specific version:
-        pragma providers deploy --version 20250115.120000
+        pragma providers deploy postgres 20250115.120000
 
     Raises:
         typer.Exit: If deployment fails.
     """
-    provider_name = package or detect_provider_package()
-
-    if not provider_name:
-        console.print("[red]Error:[/red] Could not detect provider package.")
-        console.print("Run from a provider directory or specify --package")
-        raise typer.Exit(1)
-
-    provider_id = provider_name.replace("_", "-").removesuffix("-provider")
-
     console.print(f"[bold]Deploying provider:[/bold] {provider_id}")
     if version:
         console.print(f"[dim]Version:[/dim] {version}")
