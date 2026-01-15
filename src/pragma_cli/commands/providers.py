@@ -28,6 +28,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from pragma_cli import get_client
+from pragma_cli.commands.completions import completion_provider_ids
 
 
 app = typer.Typer(help="Provider management commands")
@@ -674,7 +675,10 @@ def detect_provider_package() -> str | None:
 def delete(
     provider_id: Annotated[
         str,
-        typer.Argument(help="Provider ID to delete (e.g., 'postgres', 'my-provider')"),
+        typer.Argument(
+            help="Provider ID to delete (e.g., 'postgres', 'my-provider')",
+            autocompletion=completion_provider_ids,
+        ),
     ],
     cascade: Annotated[
         bool,
@@ -784,15 +788,18 @@ def _print_delete_result(result: ProviderDeleteResult) -> None:
 def status(
     provider_id: Annotated[
         str,
-        typer.Argument(help="Provider ID to check status (e.g., 'postgres', 'my-provider')"),
+        typer.Argument(
+            help="Provider ID to check status (e.g., 'postgres', 'my-provider')",
+            autocompletion=completion_provider_ids,
+        ),
     ],
 ):
     """Check the deployment status of a provider.
 
     Displays:
     - Deployment status (pending/progressing/available/failed)
-    - Replica count (available/ready)
-    - Current image version
+    - Deployed version
+    - Health status
     - Last updated timestamp
 
     Example:
@@ -805,7 +812,7 @@ def status(
     client = get_client()
 
     if client._auth is None:
-        console.print("[red]Error:[/red] Authentication required. Run 'pragma login' first.")
+        console.print("[red]Error:[/red] Authentication required. Run 'pragma auth login' first.")
         raise typer.Exit(1)
 
     try:
@@ -828,7 +835,7 @@ def _print_deployment_status(provider_id: str, result) -> None:
 
     Args:
         provider_id: Provider identifier.
-        result: DeploymentResult from the API.
+        result: ProviderStatus from the API.
     """
     status_colors = {
         "pending": "yellow",
@@ -847,18 +854,15 @@ def _print_deployment_status(provider_id: str, result) -> None:
     table.add_column("Value")
 
     table.add_row("Status", f"[{status_color}]{result.status.value}[/{status_color}]")
-    table.add_row("Replicas", f"{result.available_replicas} available / {result.ready_replicas} ready")
 
-    if result.image:
-        version = result.image.split(":")[-1] if ":" in result.image else "unknown"
-        table.add_row("Version", version)
-        table.add_row("Image", f"[dim]{result.image}[/dim]")
+    if result.version:
+        table.add_row("Version", result.version)
+
+    healthy_display = "[green]yes[/green]" if result.healthy else "[red]no[/red]"
+    table.add_row("Healthy", healthy_display)
 
     if result.updated_at:
         table.add_row("Updated", result.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
-
-    if result.message:
-        table.add_row("Message", result.message)
 
     console.print(table)
 
@@ -867,7 +871,10 @@ def _print_deployment_status(provider_id: str, result) -> None:
 def builds(
     provider_id: Annotated[
         str,
-        typer.Argument(help="Provider ID to list builds for (e.g., 'postgres', 'my-provider')"),
+        typer.Argument(
+            help="Provider ID to list builds for (e.g., 'postgres', 'my-provider')",
+            autocompletion=completion_provider_ids,
+        ),
     ],
 ):
     """List build history for a provider.

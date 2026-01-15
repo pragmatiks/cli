@@ -1,10 +1,30 @@
-"""CLI auto-completion functions for resource operations."""
+"""CLI auto-completion functions for resource and provider operations."""
 
 from __future__ import annotations
 
 import typer
 
 from pragma_cli import get_client
+
+
+def completion_provider_ids(incomplete: str):
+    """Complete provider identifiers based on deployed providers.
+
+    Args:
+        incomplete: Partial input to complete against available providers.
+
+    Yields:
+        Provider IDs matching the incomplete input.
+    """
+    client = get_client()
+    try:
+        providers = client.list_providers()
+    except Exception:
+        return
+
+    for provider in providers:
+        if provider.provider_id.lower().startswith(incomplete.lower()):
+            yield provider.provider_id
 
 
 def completion_resource_ids(incomplete: str):

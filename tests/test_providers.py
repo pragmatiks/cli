@@ -6,7 +6,15 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
-from pragma_sdk import BuildResult, BuildStatus, DeploymentResult, DeploymentStatus, ProviderInfo, PushResult
+from pragma_sdk import (
+    BuildResult,
+    BuildStatus,
+    DeploymentResult,
+    DeploymentStatus,
+    ProviderInfo,
+    ProviderStatus,
+    PushResult,
+)
 from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
@@ -328,14 +336,11 @@ def test_detect_provider_package_returns_none_without_pyproject(tmp_path, monkey
 
 def test_status_displays_deployment_info(cli_runner, mock_pragma_client):
     """Status command displays deployment information."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="provider-test-abc12345",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.AVAILABLE,
-        available_replicas=2,
-        ready_replicas=2,
-        image="europe-west4-docker.pkg.dev/project/repo/test:20250114.153045",
+        version="20250114.153045",
         updated_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
-        message="Deployment has minimum availability",
+        healthy=True,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test"])
@@ -344,9 +349,9 @@ def test_status_displays_deployment_info(cli_runner, mock_pragma_client):
     assert "Provider:" in result.output
     assert "test" in result.output
     assert "available" in result.output
-    assert "2 available / 2 ready" in result.output
     assert "20250114.153045" in result.output
     assert "2025-01-14" in result.output
+    assert "yes" in result.output  # healthy status
 
 
 def test_status_handles_not_found(cli_runner, mock_pragma_client):
@@ -366,38 +371,32 @@ def test_status_handles_not_found(cli_runner, mock_pragma_client):
 
 def test_status_handles_progressing_deployment(cli_runner, mock_pragma_client):
     """Status command shows progressing status correctly."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="provider-test-abc12345",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.PROGRESSING,
-        available_replicas=1,
-        ready_replicas=1,
-        image="europe-west4-docker.pkg.dev/project/repo/test:20250114.160000",
-        message="ReplicaSet is progressing",
+        version="20250114.160000",
+        healthy=False,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test"])
 
     assert result.exit_code == 0
     assert "progressing" in result.output
-    assert "1 available / 1 ready" in result.output
+    assert "no" in result.output  # not healthy
 
 
 def test_status_handles_failed_deployment(cli_runner, mock_pragma_client):
     """Status command shows failed status with error message."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="provider-test-abc12345",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.FAILED,
-        available_replicas=0,
-        ready_replicas=0,
-        message="ProgressDeadlineExceeded",
+        version="20250114.170000",
+        healthy=False,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test"])
 
     assert result.exit_code == 0
     assert "failed" in result.output
-    assert "0 available / 0 ready" in result.output
-    assert "ProgressDeadlineExceeded" in result.output
+    assert "no" in result.output  # not healthy
 
 
 def test_list_providers_displays_table(cli_runner, mock_pragma_client):

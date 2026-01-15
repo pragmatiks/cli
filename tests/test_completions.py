@@ -1,13 +1,78 @@
 """Tests for CLI auto-completion functions."""
 
 import typer
+from pragma_sdk import ProviderInfo
 
-from pragma_cli.commands.completions import completion_resource_ids, completion_resource_names
+from pragma_cli.commands.completions import (
+    completion_provider_ids,
+    completion_resource_ids,
+    completion_resource_names,
+)
 
 
 def mock_resource(provider: str, resource: str, name: str) -> dict:
     """Create a mock resource dict for testing completions."""
     return {"provider": provider, "resource": resource, "name": name}
+
+
+def mock_provider(provider_id: str) -> ProviderInfo:
+    """Create a mock provider for testing completions."""
+    return ProviderInfo(provider_id=provider_id)
+
+
+def test_completion_provider_ids_all_match(mock_cli_client):
+    mock_cli_client.list_providers.return_value = [
+        mock_provider("postgres"),
+        mock_provider("mysql"),
+        mock_provider("redis"),
+    ]
+
+    results = list(completion_provider_ids(""))
+
+    assert "postgres" in results
+    assert "mysql" in results
+    assert "redis" in results
+
+
+def test_completion_provider_ids_partial_match(mock_cli_client):
+    mock_cli_client.list_providers.return_value = [
+        mock_provider("postgres"),
+        mock_provider("mysql"),
+        mock_provider("redis"),
+    ]
+
+    results = list(completion_provider_ids("post"))
+
+    assert results == ["postgres"]
+
+
+def test_completion_provider_ids_no_match(mock_cli_client):
+    mock_cli_client.list_providers.return_value = [
+        mock_provider("postgres"),
+    ]
+
+    results = list(completion_provider_ids("xyz"))
+
+    assert results == []
+
+
+def test_completion_provider_ids_case_insensitive(mock_cli_client):
+    mock_cli_client.list_providers.return_value = [
+        mock_provider("postgres"),
+    ]
+
+    results = list(completion_provider_ids("POST"))
+
+    assert "postgres" in results
+
+
+def test_completion_provider_ids_handles_api_error(mock_cli_client):
+    """Completion gracefully returns empty when API fails."""
+    mock_cli_client.list_providers.side_effect = Exception("API connection failed")
+
+    results = list(completion_provider_ids(""))
+
+    assert results == []
 
 
 def test_completion_resource_ids_all_match(mock_cli_client):
