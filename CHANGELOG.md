@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.1 (2026-01-15)
+
+### Fix
+
+- handle missing client in shell completions
+
 ## v0.8.0 (2026-01-15)
 
 ### Feat
