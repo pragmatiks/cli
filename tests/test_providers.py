@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
-from pragma_sdk import BuildInfo, BuildResult, BuildStatus, DeploymentResult, DeploymentStatus, ProviderInfo, PushResult
+from pragma_sdk import BuildResult, BuildStatus, DeploymentResult, DeploymentStatus, ProviderInfo, PushResult
 from pytest_mock import MockerFixture
 from typer.testing import CliRunner
 
@@ -161,6 +161,7 @@ def test_push_with_deploy_flag_deploys_after_build(cli_runner, provider_project,
     mock_pragma_client.deploy_provider.return_value = DeploymentResult(
         deployment_name="provider-test",
         status=DeploymentStatus.PROGRESSING,
+        version="20250114.153045",
         message="Deployment started",
     )
 
@@ -168,7 +169,8 @@ def test_push_with_deploy_flag_deploys_after_build(cli_runner, provider_project,
 
     assert result.exit_code == 0
     assert "Deployment started:" in result.output
-    mock_pragma_client.deploy_provider.assert_called_once_with("test", "registry.local/test:abc123")
+    # Deploy is called with version from push result, not image from build
+    mock_pragma_client.deploy_provider.assert_called_once_with("test", "20250114.153045")
 
 
 def test_push_with_no_wait_returns_immediately(cli_runner, provider_project, mock_pragma_client):
@@ -322,138 +324,6 @@ def test_detect_provider_package_returns_none_without_pyproject(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     result = detect_provider_package()
     assert result is None
-
-
-def test_rollback_with_explicit_version(cli_runner, mock_pragma_client):
-    """Rollback deploys the specified version."""
-    mock_pragma_client.rollback_provider.return_value = DeploymentResult(
-        deployment_name="provider-test",
-        status=DeploymentStatus.PROGRESSING,
-        message="Deployment started",
-    )
-
-    result = cli_runner.invoke(app, ["providers", "rollback", "test", "--version", "20250114.120000"])
-
-    assert result.exit_code == 0
-    assert "Rolling back provider: test" in result.output
-    assert "Target version: 20250114.120000" in result.output
-    assert "Rollback initiated:" in result.output
-    mock_pragma_client.rollback_provider.assert_called_once_with("test", "20250114.120000")
-
-
-def test_rollback_without_version_finds_previous(cli_runner, mock_pragma_client):
-    """Rollback without version finds the second-most-recent successful build."""
-    mock_pragma_client.list_builds.return_value = [
-        BuildInfo(
-            provider_id="test",
-            version="20250114.150000",
-            status=BuildStatus.SUCCESS,
-            created_at=datetime(2025, 1, 14, 15, 0, 0),
-        ),
-        BuildInfo(
-            provider_id="test",
-            version="20250114.120000",
-            status=BuildStatus.SUCCESS,
-            created_at=datetime(2025, 1, 14, 12, 0, 0),
-        ),
-    ]
-    mock_pragma_client.rollback_provider.return_value = DeploymentResult(
-        deployment_name="provider-test",
-        status=DeploymentStatus.PROGRESSING,
-        message="Deployment started",
-    )
-
-    result = cli_runner.invoke(app, ["providers", "rollback", "test"])
-
-    assert result.exit_code == 0
-    assert "Target version: 20250114.120000" in result.output
-    mock_pragma_client.rollback_provider.assert_called_once_with("test", "20250114.120000")
-
-
-def test_rollback_without_version_fails_if_no_previous_build(cli_runner, mock_pragma_client):
-    """Rollback without version fails if only one successful build exists."""
-    mock_pragma_client.list_builds.return_value = [
-        BuildInfo(
-            provider_id="test",
-            version="20250114.150000",
-            status=BuildStatus.SUCCESS,
-            created_at=datetime(2025, 1, 14, 15, 0, 0),
-        ),
-    ]
-
-    result = cli_runner.invoke(app, ["providers", "rollback", "test"])
-
-    assert result.exit_code == 1
-    assert "No previous successful build found" in result.output
-    mock_pragma_client.rollback_provider.assert_not_called()
-
-
-def test_rollback_skips_failed_builds_when_finding_previous(cli_runner, mock_pragma_client):
-    """Rollback skips failed builds when finding previous version."""
-    mock_pragma_client.list_builds.return_value = [
-        BuildInfo(
-            provider_id="test",
-            version="20250114.160000",
-            status=BuildStatus.SUCCESS,
-            created_at=datetime(2025, 1, 14, 16, 0, 0),
-        ),
-        BuildInfo(
-            provider_id="test",
-            version="20250114.150000",
-            status=BuildStatus.FAILED,
-            error_message="Build error",
-            created_at=datetime(2025, 1, 14, 15, 0, 0),
-        ),
-        BuildInfo(
-            provider_id="test",
-            version="20250114.120000",
-            status=BuildStatus.SUCCESS,
-            created_at=datetime(2025, 1, 14, 12, 0, 0),
-        ),
-    ]
-    mock_pragma_client.rollback_provider.return_value = DeploymentResult(
-        deployment_name="provider-test",
-        status=DeploymentStatus.PROGRESSING,
-        message="Deployment started",
-    )
-
-    result = cli_runner.invoke(app, ["providers", "rollback", "test"])
-
-    assert result.exit_code == 0
-    assert "Target version: 20250114.120000" in result.output
-    mock_pragma_client.rollback_provider.assert_called_once_with("test", "20250114.120000")
-
-
-def test_rollback_fails_if_version_not_found(cli_runner, mock_pragma_client):
-    """Rollback fails if specified version doesn't exist."""
-    import httpx
-
-    mock_pragma_client.rollback_provider.side_effect = httpx.HTTPStatusError(
-        "404 Not Found",
-        request=httpx.Request("POST", "http://localhost:8000/providers/test/rollback"),
-        response=httpx.Response(404, json={"detail": "Build not found: test@20250101.000000"}),
-    )
-
-    result = cli_runner.invoke(app, ["providers", "rollback", "test", "--version", "20250101.000000"])
-
-    assert result.exit_code == 1
-    assert "Build not found" in result.output
-
-
-def test_rollback_fails_if_build_not_deployable(cli_runner, mock_pragma_client):
-    """Rollback fails if build status is not SUCCESS."""
-    import httpx
-
-    mock_pragma_client.rollback_provider.side_effect = httpx.HTTPStatusError(
-        "400 Bad Request",
-        request=httpx.Request("POST", "http://localhost:8000/providers/test/rollback"),
-        response=httpx.Response(400, json={"detail": "Build 20250114.120000 is not deployable (status: failed)"}),
-    )
-
-    result = cli_runner.invoke(app, ["providers", "rollback", "test", "--version", "20250114.120000"])
-
-    assert result.exit_code == 1
-    assert "not deployable" in result.output
 
 
 def test_status_displays_deployment_info(cli_runner, mock_pragma_client):

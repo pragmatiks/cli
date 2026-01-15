@@ -1,6 +1,6 @@
 """Provider management commands.
 
-Commands for scaffolding, syncing, and pushing Pragmatiks providers to the platform.
+Commands for scaffolding, building, and deploying Pragmatiks providers to the platform.
 """
 
 import io
@@ -17,15 +17,12 @@ import typer
 from pragma_sdk import (
     BuildResult,
     BuildStatus,
-    Config,
     DeploymentStatus,
     PragmaClient,
     ProviderDeleteResult,
     ProviderInfo,
     PushResult,
-    Resource,
 )
-from pragma_sdk.provider import discover_resources
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
@@ -436,15 +433,11 @@ def push(
             console.print(f"  pragma providers status {provider_id} --job {push_result.job_name}")
             return
 
-        build_result = _wait_for_build(client, provider_id, push_result.job_name, logs)
+        _wait_for_build(client, provider_id, push_result.job_name, logs)
 
         if deploy:
-            if not build_result.image:
-                console.print("[red]Error:[/red] Build succeeded but no image was produced")
-                raise typer.Exit(1)
-
             console.print()
-            _deploy_provider(client, provider_id, build_result.image)
+            _deploy_provider(client, provider_id, push_result.version)
     except Exception as e:
         if isinstance(e, typer.Exit):
             raise
@@ -579,13 +572,15 @@ def _stream_build_logs(client: PragmaClient, provider_id: str, job_name: str) ->
     console.print("-" * 40)
 
 
-def _deploy_provider(client: PragmaClient, provider_id: str, image: str) -> None:
-    """Deploy the provider.
+def _deploy_provider(
+    client: PragmaClient, provider_id: str, version: str | None = None
+) -> None:
+    """Deploy the provider to a specific version.
 
     Args:
         client: SDK client instance.
         provider_id: Provider identifier.
-        image: Container image to deploy.
+        version: Version to deploy (CalVer format). If None, deploys latest.
     """
     with Progress(
         SpinnerColumn(),
@@ -594,31 +589,34 @@ def _deploy_provider(client: PragmaClient, provider_id: str, image: str) -> None
         transient=True,
     ) as progress:
         progress.add_task("Deploying...", total=None)
-        deploy_result = client.deploy_provider(provider_id, image)
+        deploy_result = client.deploy_provider(provider_id, version)
 
     console.print(f"[green]Deployment started:[/green] {deploy_result.deployment_name}")
+    console.print(f"[dim]Version:[/dim] {deploy_result.version}")
     console.print(f"[dim]Status:[/dim] {deploy_result.status.value}")
 
 
 @app.command()
 def deploy(
-    image: Annotated[
-        str,
-        typer.Option("--image", "-i", help="Container image to deploy (required)"),
-    ],
+    version: Annotated[
+        str | None,
+        typer.Option("--version", "-v", help="Version to deploy (e.g., 20250115.120000). Defaults to latest."),
+    ] = None,
     package: Annotated[
         str | None,
         typer.Option("--package", "-p", help="Provider package name (auto-detected if not specified)"),
     ] = None,
 ):
-    """Deploy a provider from a built container image.
+    """Deploy a provider to a specific version.
 
-    Deploys a provider image to Kubernetes. Use after 'pragma providers push'
-    completes successfully, or to redeploy/rollback to a specific version.
+    Deploys the provider to Kubernetes. If no version is specified, deploys
+    the latest successful build. Use 'pragma providers builds' to see available versions.
 
-    Example:
-        pragma providers deploy --image europe-west4-docker.pkg.dev/project/repo/provider:tag
-        pragma providers deploy -i provider:latest --package my_provider
+    Deploy latest:
+        pragma providers deploy
+
+    Deploy specific version:
+        pragma providers deploy --version 20250115.120000
 
     Raises:
         typer.Exit: If deployment fails.
@@ -633,7 +631,10 @@ def deploy(
     provider_id = provider_name.replace("_", "-").removesuffix("-provider")
 
     console.print(f"[bold]Deploying provider:[/bold] {provider_id}")
-    console.print(f"[dim]Image:[/dim] {image}")
+    if version:
+        console.print(f"[dim]Version:[/dim] {version}")
+    else:
+        console.print("[dim]Version:[/dim] latest")
     console.print()
 
     client = get_client()
@@ -643,117 +644,10 @@ def deploy(
         raise typer.Exit(1)
 
     try:
-        _deploy_provider(client, provider_id, image)
+        _deploy_provider(client, provider_id, version)
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
-
-
-@app.command()
-def sync(
-    package: Annotated[
-        str | None,
-        typer.Option("--package", "-p", help="Provider package name (auto-detected if not specified)"),
-    ] = None,
-    dry_run: Annotated[
-        bool,
-        typer.Option("--dry-run", help="Show what would be registered without making changes"),
-    ] = False,
-):
-    """Sync resource type definitions to the Pragmatiks platform.
-
-    Discovers resources in the provider package and registers their schemas
-    with the API. This allows users to create instances of these resource types.
-
-    The command introspects the provider code to extract:
-    - Provider and resource names from @provider.resource() decorator
-    - JSON schema from Pydantic Config classes
-
-    Example:
-        pragma providers sync
-        pragma providers sync --package postgres_provider
-        pragma providers sync --dry-run
-
-    Raises:
-        typer.Exit: If package not found or registration fails.
-    """
-    package_name = package or detect_provider_package()
-
-    if not package_name:
-        typer.echo("Error: Could not detect provider package.", err=True)
-        typer.echo("Run from a provider directory or specify --package", err=True)
-        raise typer.Exit(1)
-
-    typer.echo(f"Discovering resources in {package_name}...")
-
-    try:
-        resources = discover_resources(package_name)
-    except ImportError as e:
-        typer.echo(f"Error importing package: {e}", err=True)
-        raise typer.Exit(1)
-
-    if not resources:
-        typer.echo("No resources found. Ensure resources are decorated with @provider.resource().")
-        raise typer.Exit(0)
-
-    typer.echo(f"Found {len(resources)} resource(s):")
-    typer.echo("")
-
-    if dry_run:
-        for (provider, resource_name), resource_class in resources.items():
-            typer.echo(f"  {provider}/{resource_name} ({resource_class.__name__})")
-        typer.echo("")
-        typer.echo("Dry run - no changes made.")
-        raise typer.Exit(0)
-
-    client = get_client()
-
-    for (provider, resource_name), resource_class in resources.items():
-        try:
-            config_class = get_config_class(resource_class)
-            schema = config_class.model_json_schema()
-        except ValueError as e:
-            typer.echo(f"  {provider}/{resource_name}: skipped ({e})", err=True)
-            continue
-
-        try:
-            client.register_resource(
-                provider=provider,
-                resource=resource_name,
-                schema=schema,
-            )
-            typer.echo(f"  {provider}/{resource_name}: registered")
-        except Exception as e:
-            typer.echo(f"  {provider}/{resource_name}: failed ({e})", err=True)
-
-    typer.echo("")
-    typer.echo("Sync complete.")
-
-
-def get_config_class(resource_class: type[Resource]) -> type[Config]:
-    """Extract Config subclass from Resource's config field annotation.
-
-    Args:
-        resource_class: A Resource subclass.
-
-    Returns:
-        Config subclass type from the Resource's config field.
-
-    Raises:
-        ValueError: If Resource has no config field or wrong type.
-    """
-    annotations = resource_class.model_fields
-    config_field = annotations.get("config")
-
-    if config_field is None:
-        raise ValueError(f"Resource {resource_class.__name__} has no config field")
-
-    config_type = config_field.annotation
-
-    if not isinstance(config_type, type) or not issubclass(config_type, Config):
-        raise ValueError(f"Resource {resource_class.__name__} config field is not a Config subclass")
-
-    return config_type
 
 
 def detect_provider_package() -> str | None:
@@ -884,109 +778,6 @@ def _print_delete_result(result: ProviderDeleteResult) -> None:
     table.add_row("NATS Consumer", "Deleted" if result.consumer_deleted else "Not found")
 
     console.print(table)
-
-
-@app.command()
-def rollback(
-    provider_id: Annotated[
-        str,
-        typer.Argument(help="Provider ID to rollback (e.g., 'postgres', 'my-provider')"),
-    ],
-    version: Annotated[
-        str | None,
-        typer.Option("--version", "-v", help="Target version to rollback to (default: previous successful build)"),
-    ] = None,
-):
-    """Rollback a provider to a previous version.
-
-    Redeploys a previously successful build. If no version is specified,
-    rolls back to the previous successful version.
-
-    Rollback to specific version:
-        pragma providers rollback my-provider --version 20250114.120000
-
-    Rollback to previous version:
-        pragma providers rollback my-provider
-
-    Example:
-        pragma providers rollback postgres --version 20250114.120000
-        pragma providers rollback postgres -v 20250114.120000
-        pragma providers rollback postgres
-
-    Raises:
-        typer.Exit: If rollback fails or no suitable version found.
-    """
-    client = get_client()
-
-    if client._auth is None:
-        console.print("[red]Error:[/red] Authentication required. Run 'pragma login' first.")
-        raise typer.Exit(1)
-
-    try:
-        target_version = version
-        if target_version is None:
-            target_version = _find_previous_version(client, provider_id)
-
-        console.print(f"[bold]Rolling back provider:[/bold] {provider_id}")
-        console.print(f"[dim]Target version:[/dim] {target_version}")
-        console.print()
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-            transient=True,
-        ) as progress:
-            progress.add_task("Deploying previous version...", total=None)
-            result = client.rollback_provider(provider_id, target_version)
-
-        console.print(f"[green]Rollback initiated:[/green] {result.deployment_name}")
-        console.print(f"[dim]Status:[/dim] {result.status.value}")
-
-    except httpx.HTTPStatusError as e:
-        if e.response.status_code == 404:
-            detail = e.response.json().get("detail", "Build not found")
-            console.print(f"[red]Error:[/red] {detail}")
-        elif e.response.status_code == 400:
-            detail = e.response.json().get("detail", "Build not deployable")
-            console.print(f"[red]Error:[/red] {detail}")
-        else:
-            console.print(f"[red]Error:[/red] {e.response.text}")
-        raise typer.Exit(1)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(1)
-
-
-def _find_previous_version(client: PragmaClient, provider_id: str) -> str:
-    """Find the previous successful version for rollback.
-
-    Gets the build history and finds the second-most-recent successful build,
-    which represents the version before the current deployment.
-
-    Args:
-        client: SDK client instance.
-        provider_id: Provider identifier.
-
-    Returns:
-        CalVer version string of the previous successful build.
-
-    Raises:
-        ValueError: If no previous successful build exists.
-    """
-    builds = client.list_builds(provider_id)
-    successful_builds = [b for b in builds if b.status == BuildStatus.SUCCESS]
-
-    if len(successful_builds) < 2:
-        raise ValueError(
-            f"No previous successful build found for provider '{provider_id}'. "
-            "Specify a version explicitly with --version."
-        )
-
-    return successful_builds[1].version
 
 
 @app.command()
