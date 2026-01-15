@@ -15,7 +15,7 @@ import copier
 import httpx
 import typer
 from pragma_sdk import (
-    BuildResult,
+    BuildInfo,
     BuildStatus,
     DeploymentStatus,
     PragmaClient,
@@ -475,7 +475,7 @@ def _wait_for_build(
     provider_id: str,
     version: str,
     logs: bool,
-) -> BuildResult:
+) -> BuildInfo:
     """Wait for build to complete, optionally streaming logs.
 
     Args:
@@ -485,7 +485,7 @@ def _wait_for_build(
         logs: Whether to stream build logs.
 
     Returns:
-        Final BuildResult.
+        Final BuildInfo.
 
     Raises:
         typer.Exit: On build failure or timeout.
@@ -510,7 +510,7 @@ def _wait_for_build(
     return final_build
 
 
-def _poll_build_status(client: PragmaClient, provider_id: str, version: str) -> BuildResult:
+def _poll_build_status(client: PragmaClient, provider_id: str, version: str) -> BuildInfo:
     """Poll build status until completion or timeout.
 
     Args:
@@ -519,7 +519,7 @@ def _poll_build_status(client: PragmaClient, provider_id: str, version: str) -> 
         version: CalVer version string.
 
     Returns:
-        Final BuildResult.
+        Final BuildInfo.
 
     Raises:
         typer.Exit: If build times out.

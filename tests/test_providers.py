@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from pragma_sdk import (
-    BuildResult,
+    BuildInfo,
     BuildStatus,
     DeploymentStatus,
     ProviderInfo,
@@ -131,10 +131,11 @@ def test_push_uploads_tarball_and_polls_status(cli_runner, provider_project, moc
         status=BuildStatus.PENDING,
         message="Build started",
     )
-    mock_pragma_client.get_build_status.return_value = BuildResult(
+    mock_pragma_client.get_build_status.return_value = BuildInfo(
+        provider_id="test",
         version="20250114.153045",
         status=BuildStatus.SUCCESS,
-        image="registry.local/test:abc123",
+        created_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
     )
 
     result = cli_runner.invoke(app, ["providers", "push"])
@@ -158,10 +159,11 @@ def test_push_with_deploy_flag_deploys_after_build(cli_runner, provider_project,
         status=BuildStatus.PENDING,
         message="Build started",
     )
-    mock_pragma_client.get_build_status.return_value = BuildResult(
+    mock_pragma_client.get_build_status.return_value = BuildInfo(
+        provider_id="test",
         version="20250114.153045",
         status=BuildStatus.SUCCESS,
-        image="registry.local/test:abc123",
+        created_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
     )
     mock_pragma_client.deploy_provider.return_value = ProviderStatus(
         status=DeploymentStatus.PROGRESSING,
@@ -200,10 +202,12 @@ def test_push_handles_build_failure(cli_runner, provider_project, mock_pragma_cl
         status=BuildStatus.PENDING,
         message="Build started",
     )
-    mock_pragma_client.get_build_status.return_value = BuildResult(
+    mock_pragma_client.get_build_status.return_value = BuildInfo(
+        provider_id="test",
         version="20250114.153045",
         status=BuildStatus.FAILED,
         error_message="Dockerfile syntax error",
+        created_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
     )
 
     result = cli_runner.invoke(app, ["providers", "push"])
@@ -223,10 +227,11 @@ def test_push_with_package_option_uses_specified_name(cli_runner, tmp_path, mock
         status=BuildStatus.PENDING,
         message="Build started",
     )
-    mock_pragma_client.get_build_status.return_value = BuildResult(
+    mock_pragma_client.get_build_status.return_value = BuildInfo(
+        provider_id="custom-provider",
         version="20250114.153045",
         status=BuildStatus.SUCCESS,
-        image="registry.local/custom:abc123",
+        created_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
     )
 
     result = cli_runner.invoke(app, ["providers", "push", "--package", "custom_provider"])
