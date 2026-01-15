@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.2 (2026-01-15)
+
+### Refactor
+
+- hide internal details from provider output
+
 ## v0.9.1 (2026-01-15)
 
 ### Refactor
