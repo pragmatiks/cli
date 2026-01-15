@@ -3,8 +3,28 @@
 from __future__ import annotations
 
 import typer
+from pragma_sdk import PragmaClient
 
-from pragma_cli import get_client
+from pragma_cli.config import get_current_context
+
+
+def _get_completion_client() -> PragmaClient | None:
+    """Get a client for shell completion context.
+
+    Returns:
+        PragmaClient instance or None if configuration unavailable.
+    """
+    try:
+        context_name, context_config = get_current_context()
+        if context_config is None:
+            return None
+        return PragmaClient(
+            base_url=context_config.api_url,
+            context=context_name,
+            require_auth=False,
+        )
+    except Exception:
+        return None
 
 
 def completion_provider_ids(incomplete: str):
@@ -16,7 +36,9 @@ def completion_provider_ids(incomplete: str):
     Yields:
         Provider IDs matching the incomplete input.
     """
-    client = get_client()
+    client = _get_completion_client()
+    if client is None:
+        return
     try:
         providers = client.list_providers()
     except Exception:
@@ -36,7 +58,9 @@ def completion_resource_ids(incomplete: str):
     Yields:
         Resource identifiers matching the incomplete input.
     """
-    client = get_client()
+    client = _get_completion_client()
+    if client is None:
+        return
     try:
         resources = client.list_resources()
     except Exception:
@@ -60,7 +84,9 @@ def completion_resource_names(ctx: typer.Context, incomplete: str):
     Yields:
         Resource names matching the incomplete input for the selected resource type.
     """
-    client = get_client()
+    client = _get_completion_client()
+    if client is None:
+        return
     resource_id = ctx.params.get("resource_id")
     if not resource_id or "/" not in resource_id:
         return
