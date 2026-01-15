@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.1 (2026-01-15)
+
+### Refactor
+
+- simplify provider delete output
+
 ## v0.9.0 (2026-01-15)
 
 ### Feat
