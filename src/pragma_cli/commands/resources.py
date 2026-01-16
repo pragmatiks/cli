@@ -6,11 +6,13 @@ import json
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 import yaml
 from rich import print
 from rich.console import Console
 from rich.markup import escape
+from rich.table import Table
 
 from pragma_cli import get_client
 from pragma_cli.commands.completions import (
@@ -22,6 +24,63 @@ from pragma_cli.helpers import parse_resource_id
 
 console = Console()
 app = typer.Typer()
+
+
+def _format_api_error(error: httpx.HTTPStatusError) -> str:
+    """Format an API error response with structured details.
+
+    Returns:
+        Formatted error message with details extracted from JSON response.
+    """
+    try:
+        detail = error.response.json().get("detail", {})
+    except (json.JSONDecodeError, ValueError):
+        # Fall back to plain text if not JSON
+        return error.response.text or str(error)
+
+    # Handle simple string details
+    if isinstance(detail, str):
+        return detail
+
+    # Handle structured error responses
+    message = detail.get("message", str(error))
+    parts = [message]
+
+    # DependencyValidationError details
+    if missing := detail.get("missing_dependencies"):
+        parts.append("\n  Missing dependencies:")
+        for dep_id in missing:
+            parts.append(f"    - {dep_id}")
+    if not_ready := detail.get("not_ready_dependencies"):
+        parts.append("\n  Dependencies not ready:")
+        for item in not_ready:
+            if isinstance(item, dict):
+                parts.append(f"    - {item['id']} (state: {item['state']})")
+            else:
+                parts.append(f"    - {item}")
+
+    # FieldReferenceError details
+    if field := detail.get("field"):
+        ref_parts = [
+            detail.get("reference_provider", ""),
+            detail.get("reference_resource", ""),
+            detail.get("reference_name", ""),
+        ]
+        ref_id = "/".join(filter(None, ref_parts))
+        if ref_id:
+            parts.append(f"\n  Reference: {ref_id}#{field}")
+
+    # InvalidLifecycleTransitionError details
+    if current_state := detail.get("current_state"):
+        target_state = detail.get("target_state", "unknown")
+        parts.append(f"\n  Current state: {current_state}")
+        parts.append(f"  Target state: {target_state}")
+
+    # ResourceInProcessingError details
+    if resource_id := detail.get("resource_id"):
+        parts.append(f"\n  Resource: {resource_id}")
+
+    return "".join(parts)
 
 
 def resolve_file_references(resource: dict, base_dir: Path) -> dict:
@@ -55,7 +114,7 @@ def resolve_file_references(resource: dict, base_dir: Path) -> dict:
     resolved_data = {}
     for key, value in data.items():
         if isinstance(value, str) and value.startswith("@"):
-            file_path = Path(value[1:])
+            file_path = Path(value[1:]).expanduser()
             if not file_path.is_absolute():
                 file_path = base_dir / file_path
 
@@ -85,6 +144,51 @@ def format_state(state: str) -> str:
     return escape(f"[{state}]")
 
 
+@app.command("types")
+def list_resource_types(
+    provider: Annotated[str | None, typer.Option("--provider", "-p", help="Filter by provider")] = None,
+):
+    """List available resource types from deployed providers.
+
+    Displays resource definitions (types) that have been registered by providers.
+    Use this to discover what resources you can create.
+
+    Examples:
+        pragma resources types
+        pragma resources types --provider gcp
+
+    Raises:
+        typer.Exit: If an error occurs while fetching resource types.
+    """
+    client = get_client()
+    try:
+        types = client.list_resource_types(provider=provider)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)
+
+    if not types:
+        console.print("[dim]No resource types found.[/dim]")
+        return
+
+    console.print()
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Provider")
+    table.add_column("Resource")
+    table.add_column("Description")
+
+    for resource_type in types:
+        description = resource_type.get("description") or "[dim]—[/dim]"
+        table.add_row(
+            resource_type["provider"],
+            resource_type["resource"],
+            description,
+        )
+
+    console.print(table)
+    console.print()
+
+
 @app.command("list")
 def list_resources(
     provider: Annotated[str | None, typer.Option("--provider", "-p", help="Filter by provider")] = None,
@@ -100,7 +204,19 @@ def list_resources(
         return
 
     for res in resources:
-        print(f"{res['provider']}/{res['resource']}/{res['name']} {format_state(res['lifecycle_state'])}")
+        line = f"{res['provider']}/{res['resource']}/{res['name']} {format_state(res['lifecycle_state'])}"
+        print(line)
+        # Show error for failed resources
+        if res.get("lifecycle_state") == "failed" and res.get("error"):
+            console.print(f"  [red]Error:[/red] {escape(res['error'])}")
+
+
+def _print_resource_line(res: dict, prefix: str = "") -> None:
+    """Print a single resource line with optional error for failed resources."""
+    line = f"{prefix}{res['provider']}/{res['resource']}/{res['name']} {format_state(res['lifecycle_state'])}"
+    print(line)
+    if res.get("lifecycle_state") == "failed" and res.get("error"):
+        console.print(f"  [red]Error:[/red] {escape(res['error'])}")
 
 
 @app.command()
@@ -113,10 +229,143 @@ def get(
     provider, resource = parse_resource_id(resource_id)
     if name:
         res = client.get_resource(provider=provider, resource=resource, name=name)
-        print(f"{resource_id}/{res['name']} {format_state(res['lifecycle_state'])}")
+        _print_resource_line(res)
     else:
         for res in client.list_resources(provider=provider, resource=resource):
-            print(f"{resource_id}/{res['name']} {format_state(res['lifecycle_state'])}")
+            _print_resource_line(res)
+
+
+def _format_state_color(state: str) -> str:
+    """Format lifecycle state with color markup.
+
+    Returns:
+        State string wrapped in Rich color markup.
+    """
+    state_colors = {
+        "draft": "dim",
+        "pending": "yellow",
+        "processing": "cyan",
+        "ready": "green",
+        "failed": "red",
+    }
+    color = state_colors.get(state.lower(), "white")
+    return f"[{color}]{state}[/{color}]"
+
+
+def _format_config_value(value, *, redact_keys: set[str] | None = None) -> str:
+    """Format a config value, redacting sensitive fields.
+
+    Returns:
+        Formatted string representation with sensitive values masked.
+    """
+    redact_keys = redact_keys or {"credentials", "password", "secret", "token", "key", "data"}
+    if isinstance(value, dict):
+        # Check if this is a FieldReference
+        if "provider" in value and "resource" in value and "name" in value and "field" in value:
+            return f"{value['provider']}/{value['resource']}/{value['name']}#{value['field']}"
+        # Recursively format nested dicts
+        formatted = {}
+        for k, v in value.items():
+            if k.lower() in redact_keys:
+                formatted[k] = "********"
+            else:
+                formatted[k] = _format_config_value(v, redact_keys=redact_keys)
+        return str(formatted)
+    elif isinstance(value, list):
+        return str([_format_config_value(v, redact_keys=redact_keys) for v in value])
+    return str(value)
+
+
+def _print_resource_details(res: dict) -> None:
+    """Print resource details in a formatted table."""
+    resource_id = f"{res['provider']}/{res['resource']}/{res['name']}"
+
+    console.print()
+    console.print(f"[bold]Resource:[/bold] {resource_id}")
+    console.print()
+
+    # Main properties table
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Property")
+    table.add_column("Value")
+
+    # State with color
+    table.add_row("State", _format_state_color(res["lifecycle_state"]))
+
+    # Error if failed
+    if res.get("error"):
+        table.add_row("Error", f"[red]{escape(res['error'])}[/red]")
+
+    # Timestamps
+    if res.get("created_at"):
+        table.add_row("Created", res["created_at"])
+    if res.get("updated_at"):
+        table.add_row("Updated", res["updated_at"])
+
+    console.print(table)
+
+    # Config section
+    config = res.get("config", {})
+    if config:
+        console.print()
+        console.print("[bold]Config:[/bold]")
+        for key, value in config.items():
+            formatted = _format_config_value(value)
+            console.print(f"  {key}: {formatted}")
+
+    # Outputs section
+    outputs = res.get("outputs", {})
+    if outputs:
+        console.print()
+        console.print("[bold]Outputs:[/bold]")
+        for key, value in outputs.items():
+            console.print(f"  {key}: {value}")
+
+    # Dependencies section
+    dependencies = res.get("dependencies", [])
+    if dependencies:
+        console.print()
+        console.print("[bold]Dependencies:[/bold]")
+        for dep in dependencies:
+            dep_id = f"{dep['provider']}/{dep['resource']}/{dep['name']}"
+            console.print(f"  - {dep_id}")
+
+    # Tags section
+    tags = res.get("tags", [])
+    if tags:
+        console.print()
+        console.print("[bold]Tags:[/bold]")
+        console.print(f"  {', '.join(tags)}")
+
+    console.print()
+
+
+@app.command()
+def describe(
+    resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
+    name: Annotated[str, typer.Argument(autocompletion=completion_resource_names)],
+):
+    """Show detailed information about a resource.
+
+    Displays the resource's config, outputs, dependencies, and error messages.
+
+    Examples:
+        pragma resources describe gcp/secret my-test-secret
+        pragma resources describe postgres/database my-db
+
+    Raises:
+        typer.Exit: If the resource is not found or an error occurs.
+    """
+    client = get_client()
+    provider, resource = parse_resource_id(resource_id)
+
+    try:
+        res = client.get_resource(provider=provider, resource=resource, name=name)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)
+
+    _print_resource_details(res)
 
 
 @app.command()
@@ -134,6 +383,9 @@ def apply(
     For pragma/secret resources, file references in config.data values
     are resolved before submission. Use '@path/to/file' syntax to inline
     file contents.
+
+    Raises:
+        typer.Exit: If the apply operation fails.
     """
     client = get_client()
     for f in file:
@@ -144,9 +396,14 @@ def apply(
             resource = resolve_file_references(resource, base_dir)
             if pending:
                 resource["lifecycle_state"] = "pending"
-            result = client.apply_resource(resource=resource)
-            res_id = f"{result['provider']}/{result['resource']}/{result['name']}"
-            print(f"Applied {res_id} {format_state(result['lifecycle_state'])}")
+            res_id = f"{resource.get('provider', '?')}/{resource.get('resource', '?')}/{resource.get('name', '?')}"
+            try:
+                result = client.apply_resource(resource=resource)
+                res_id = f"{result['provider']}/{result['resource']}/{result['name']}"
+                print(f"Applied {res_id} {format_state(result['lifecycle_state'])}")
+            except httpx.HTTPStatusError as e:
+                console.print(f"[red]Error applying {res_id}:[/red] {_format_api_error(e)}")
+                raise typer.Exit(1)
 
 
 @app.command()
@@ -154,52 +411,16 @@ def delete(
     resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
     name: Annotated[str, typer.Argument(autocompletion=completion_resource_names)],
 ):
-    """Delete a resource."""
-    client = get_client()
-    provider, resource = parse_resource_id(resource_id)
-    client.delete_resource(provider=provider, resource=resource, name=name)
-    print(f"Deleted {resource_id}/{name}")
+    """Delete a resource.
 
-
-@app.command()
-def register(
-    resource_id: Annotated[str, typer.Argument(help="Resource type in provider/resource format")],
-    description: Annotated[str | None, typer.Option("--description", "-d", help="Resource type description")] = None,
-    schema_file: Annotated[typer.FileText | None, typer.Option("--schema", "-s", help="JSON schema file")] = None,
-    tags: Annotated[list[str] | None, typer.Option("--tag", "-t", help="Tags for categorization")] = None,
-):
-    """Register a new resource type.
-
-    Registers a resource type so that resources of this type can be created.
-    Providers use this to declare what resources they can manage.
+    Raises:
+        typer.Exit: If the resource is not found or deletion fails.
     """
     client = get_client()
     provider, resource = parse_resource_id(resource_id)
-
-    schema = None
-    if schema_file:
-        schema = json.load(schema_file)
-
-    client.register_resource(
-        provider=provider,
-        resource=resource,
-        schema=schema,
-        description=description,
-        tags=tags,
-    )
-    print(f"Registered {resource_id}")
-
-
-@app.command()
-def unregister(
-    resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
-):
-    """Unregister a resource type.
-
-    Removes a resource type registration. Existing resources of this type
-    will no longer be manageable.
-    """
-    client = get_client()
-    provider, resource = parse_resource_id(resource_id)
-    client.unregister_resource(provider=provider, resource=resource)
-    print(f"Unregistered {resource_id}")
+    try:
+        client.delete_resource(provider=provider, resource=resource, name=name)
+        print(f"Deleted {resource_id}/{name}")
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error deleting {resource_id}/{name}:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)

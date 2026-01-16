@@ -142,51 +142,6 @@ def test_delete_resource(cli_runner, mock_cli_client):
     mock_cli_client.delete_resource.assert_called_once_with(provider="postgres", resource="database", name="test-db")
 
 
-def test_register_resource(cli_runner, mock_cli_client):
-    result = cli_runner.invoke(app, ["resources", "register", "postgres/database"])
-    assert result.exit_code == 0
-    assert "Registered postgres/database" in result.stdout
-    mock_cli_client.register_resource.assert_called_once_with(
-        provider="postgres", resource="database", schema=None, description=None, tags=None
-    )
-
-
-def test_register_resource_with_options(cli_runner, mock_cli_client):
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        f.write('{"type": "object"}')
-        temp_path = f.name
-    try:
-        result = cli_runner.invoke(
-            app,
-            [
-                "resources",
-                "register",
-                "postgres/database",
-                "--description",
-                "PostgreSQL database",
-                "--schema",
-                temp_path,
-                "--tag",
-                "data",
-            ],
-        )
-        assert result.exit_code == 0
-        mock_cli_client.register_resource.assert_called_once()
-        call_kwargs = mock_cli_client.register_resource.call_args[1]
-        assert call_kwargs["description"] == "PostgreSQL database"
-        assert call_kwargs["schema"] == {"type": "object"}
-        assert call_kwargs["tags"] == ["data"]
-    finally:
-        Path(temp_path).unlink()
-
-
-def test_unregister_resource(cli_runner, mock_cli_client):
-    result = cli_runner.invoke(app, ["resources", "unregister", "postgres/database"])
-    assert result.exit_code == 0
-    assert "Unregistered postgres/database" in result.stdout
-    mock_cli_client.unregister_resource.assert_called_once_with(provider="postgres", resource="database")
-
-
 def test_get_nonexistent_resource(cli_runner, mock_cli_client):
     mock_cli_client.get_resource.side_effect = Exception("Resource not found")
     result = cli_runner.invoke(app, ["resources", "get", "postgres/database", "nonexistent"])
@@ -399,3 +354,286 @@ config:
     config = call_kwargs["resource"]["config"]
     assert config["description"] == "My secret"
     assert config["data"]["secret.txt"] == "secret data"
+
+
+def test_describe_resource_ready(cli_runner, mock_cli_client):
+    """Test describe shows full resource details for ready resource."""
+    mock_cli_client.get_resource.return_value = {
+        "provider": "gcp",
+        "resource": "secret",
+        "name": "my-secret",
+        "lifecycle_state": "ready",
+        "config": {"project_id": "my-project", "secret_id": "test-secret"},
+        "outputs": {"secret_name": "projects/my-project/secrets/test-secret"},
+        "dependencies": [],
+        "tags": ["test", "gcp"],
+        "created_at": "2026-01-16T10:00:00Z",
+        "updated_at": "2026-01-16T10:30:00Z",
+        "error": None,
+    }
+    result = cli_runner.invoke(app, ["resources", "describe", "gcp/secret", "my-secret"])
+    assert result.exit_code == 0
+    assert "gcp/secret/my-secret" in result.stdout
+    assert "ready" in result.stdout
+    assert "project_id" in result.stdout
+    assert "my-project" in result.stdout
+    assert "secret_name" in result.stdout
+    assert "test, gcp" in result.stdout
+    mock_cli_client.get_resource.assert_called_once_with(provider="gcp", resource="secret", name="my-secret")
+
+
+def test_describe_resource_failed(cli_runner, mock_cli_client):
+    """Test describe shows error message for failed resource."""
+    mock_cli_client.get_resource.return_value = {
+        "provider": "gcp",
+        "resource": "secret",
+        "name": "failed-secret",
+        "lifecycle_state": "failed",
+        "config": {"project_id": "my-project"},
+        "outputs": {},
+        "dependencies": [],
+        "tags": [],
+        "created_at": "2026-01-16T10:00:00Z",
+        "updated_at": "2026-01-16T10:30:00Z",
+        "error": "Secret Manager API not enabled for project",
+    }
+    result = cli_runner.invoke(app, ["resources", "describe", "gcp/secret", "failed-secret"])
+    assert result.exit_code == 0
+    assert "failed" in result.stdout
+    assert "Error" in result.stdout
+    assert "Secret Manager API not enabled" in result.stdout
+
+
+def test_describe_resource_with_dependencies(cli_runner, mock_cli_client):
+    """Test describe shows dependencies."""
+    mock_cli_client.get_resource.return_value = {
+        "provider": "gcp",
+        "resource": "secret",
+        "name": "dep-secret",
+        "lifecycle_state": "ready",
+        "config": {},
+        "outputs": {},
+        "dependencies": [
+            {"provider": "pragma", "resource": "secret", "name": "credentials"},
+        ],
+        "tags": [],
+        "created_at": "2026-01-16T10:00:00Z",
+        "updated_at": "2026-01-16T10:30:00Z",
+        "error": None,
+    }
+    result = cli_runner.invoke(app, ["resources", "describe", "gcp/secret", "dep-secret"])
+    assert result.exit_code == 0
+    assert "Dependencies" in result.stdout
+    assert "pragma/secret/credentials" in result.stdout
+
+
+def test_describe_resource_with_field_reference(cli_runner, mock_cli_client):
+    """Test describe formats FieldReference in config."""
+    mock_cli_client.get_resource.return_value = {
+        "provider": "gcp",
+        "resource": "secret",
+        "name": "ref-secret",
+        "lifecycle_state": "ready",
+        "config": {
+            "project_id": "my-project",
+            "credentials": {
+                "provider": "pragma",
+                "resource": "secret",
+                "name": "gcp-creds",
+                "field": "config.data.service_account",
+            },
+        },
+        "outputs": {},
+        "dependencies": [],
+        "tags": [],
+        "created_at": "2026-01-16T10:00:00Z",
+        "updated_at": "2026-01-16T10:30:00Z",
+        "error": None,
+    }
+    result = cli_runner.invoke(app, ["resources", "describe", "gcp/secret", "ref-secret"])
+    assert result.exit_code == 0
+    # FieldReference should be formatted as provider/resource/name#field
+    assert "pragma/secret/gcp-creds#config.data.service_account" in result.stdout
+
+
+def test_describe_resource_not_found(cli_runner, mock_cli_client):
+    """Test describe handles not found error."""
+    import httpx
+
+    response = httpx.Response(404, json={"detail": "Resource not found: gcp_secret_nonexistent"})
+    mock_cli_client.get_resource.side_effect = httpx.HTTPStatusError(
+        "404 Not Found", request=httpx.Request("GET", "http://test"), response=response
+    )
+    result = cli_runner.invoke(app, ["resources", "describe", "gcp/secret", "nonexistent"])
+    assert result.exit_code == 1
+    assert "Error" in result.stdout
+    assert "Resource not found" in result.stdout
+
+
+def test_list_resources_shows_error_for_failed(cli_runner, mock_cli_client):
+    """Test list shows error message for failed resources."""
+    mock_cli_client.list_resources.return_value = [
+        {
+            "provider": "gcp",
+            "resource": "secret",
+            "name": "failed-resource",
+            "lifecycle_state": "failed",
+            "error": "Secret Manager API not enabled",
+        },
+    ]
+    result = cli_runner.invoke(app, ["resources", "list"])
+    assert result.exit_code == 0
+    assert "gcp/secret/failed-resource" in result.stdout
+    assert "[failed]" in result.stdout
+    assert "Secret Manager API not enabled" in result.stdout
+
+
+def test_get_resource_shows_error_for_failed(cli_runner, mock_cli_client):
+    """Test get shows error message for failed resource."""
+    mock_cli_client.get_resource.return_value = {
+        "provider": "gcp",
+        "resource": "secret",
+        "name": "failed-resource",
+        "lifecycle_state": "failed",
+        "error": "Credentials invalid",
+    }
+    result = cli_runner.invoke(app, ["resources", "get", "gcp/secret", "failed-resource"])
+    assert result.exit_code == 0
+    assert "[failed]" in result.stdout
+    assert "Credentials invalid" in result.stdout
+
+
+def test_apply_shows_dependency_validation_error(cli_runner, mock_cli_client, tmp_path):
+    """Test apply shows detailed dependency validation errors."""
+    import httpx
+
+    yaml_content = """provider: gcp
+resource: secret
+name: test-secret
+config:
+  project_id: my-project
+"""
+    yaml_file = tmp_path / "secret.yaml"
+    yaml_file.write_text(yaml_content)
+
+    response = httpx.Response(
+        422,
+        json={
+            "detail": {
+                "message": "Dependency validation failed",
+                "missing_dependencies": [],
+                "not_ready_dependencies": [{"id": "resource:pragma_secret_gcp-credentials", "state": "pending"}],
+            }
+        },
+    )
+    mock_cli_client.apply_resource.side_effect = httpx.HTTPStatusError(
+        "422 Unprocessable Entity", request=httpx.Request("POST", "http://test"), response=response
+    )
+
+    result = cli_runner.invoke(app, ["resources", "apply", str(yaml_file), "--pending"])
+    assert result.exit_code == 1
+    assert "Dependency validation failed" in result.stdout
+    assert "Dependencies not ready" in result.stdout
+    assert "pending" in result.stdout
+
+
+def test_apply_shows_field_reference_error(cli_runner, mock_cli_client, tmp_path):
+    """Test apply shows detailed field reference errors."""
+    import httpx
+
+    yaml_content = """provider: gcp
+resource: secret
+name: test-secret
+config:
+  project_id: my-project
+"""
+    yaml_file = tmp_path / "secret.yaml"
+    yaml_file.write_text(yaml_content)
+
+    response = httpx.Response(
+        422,
+        json={
+            "detail": {
+                "message": "Field reference resolution failed",
+                "reference_provider": "pragma",
+                "reference_resource": "secret",
+                "reference_name": "gcp-creds",
+                "field": "config.data.service_account",
+            }
+        },
+    )
+    mock_cli_client.apply_resource.side_effect = httpx.HTTPStatusError(
+        "422 Unprocessable Entity", request=httpx.Request("POST", "http://test"), response=response
+    )
+
+    result = cli_runner.invoke(app, ["resources", "apply", str(yaml_file), "--pending"])
+    assert result.exit_code == 1
+    assert "Field reference resolution failed" in result.stdout
+    assert "pragma/secret/gcp-creds#config.data.service_account" in result.stdout
+
+
+def test_delete_shows_error(cli_runner, mock_cli_client):
+    """Test delete shows error message on failure."""
+    import httpx
+
+    response = httpx.Response(404, json={"detail": "Resource not found"})
+    mock_cli_client.delete_resource.side_effect = httpx.HTTPStatusError(
+        "404 Not Found", request=httpx.Request("DELETE", "http://test"), response=response
+    )
+    result = cli_runner.invoke(app, ["resources", "delete", "gcp/secret", "nonexistent"])
+    assert result.exit_code == 1
+    assert "Error deleting" in result.stdout
+    assert "Resource not found" in result.stdout
+
+
+def test_types_shows_table(cli_runner, mock_cli_client):
+    """Test types command shows resource types in a table."""
+    mock_cli_client.list_resource_types.return_value = [
+        {"provider": "gcp", "resource": "secret", "description": "GCP Secret Manager secret"},
+        {"provider": "gcp", "resource": "bucket", "description": "GCP Cloud Storage bucket"},
+        {"provider": "postgres", "resource": "database", "description": None},
+    ]
+    result = cli_runner.invoke(app, ["resources", "types"])
+    assert result.exit_code == 0
+    assert "Provider" in result.stdout
+    assert "Resource" in result.stdout
+    assert "Description" in result.stdout
+    assert "gcp" in result.stdout
+    assert "secret" in result.stdout
+    assert "GCP Secret Manager secret" in result.stdout
+    assert "bucket" in result.stdout
+    assert "postgres" in result.stdout
+    assert "database" in result.stdout
+    mock_cli_client.list_resource_types.assert_called_once_with(provider=None)
+
+
+def test_types_with_provider_filter(cli_runner, mock_cli_client):
+    """Test types command filters by provider."""
+    mock_cli_client.list_resource_types.return_value = [
+        {"provider": "gcp", "resource": "secret", "description": "GCP Secret Manager secret"},
+    ]
+    result = cli_runner.invoke(app, ["resources", "types", "--provider", "gcp"])
+    assert result.exit_code == 0
+    assert "gcp" in result.stdout
+    mock_cli_client.list_resource_types.assert_called_once_with(provider="gcp")
+
+
+def test_types_empty_list(cli_runner, mock_cli_client):
+    """Test types command handles empty list."""
+    mock_cli_client.list_resource_types.return_value = []
+    result = cli_runner.invoke(app, ["resources", "types"])
+    assert result.exit_code == 0
+    assert "No resource types found" in result.stdout
+
+
+def test_types_shows_error(cli_runner, mock_cli_client):
+    """Test types command shows error on failure."""
+    import httpx
+
+    response = httpx.Response(500, json={"detail": "Internal server error"})
+    mock_cli_client.list_resource_types.side_effect = httpx.HTTPStatusError(
+        "500 Internal Server Error", request=httpx.Request("GET", "http://test"), response=response
+    )
+    result = cli_runner.invoke(app, ["resources", "types"])
+    assert result.exit_code == 1
+    assert "Error" in result.stdout
