@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.0 (2026-01-16)
+
+### Feat
+
+- **cli**: add --output flag for structured JSON/YAML output
+
 ## v0.11.0 (2026-01-16)
 
 ### Feat
