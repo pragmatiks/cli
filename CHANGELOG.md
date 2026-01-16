@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.11.0 (2026-01-16)
+
+### Feat
+
+- Improve CLI UX with Rich tables and version flag
+
 ## v0.10.0 (2026-01-16)
 
 ### Feat
