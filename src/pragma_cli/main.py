@@ -1,5 +1,6 @@
 """CLI entry point with Typer application setup and command routing."""
 
+from importlib.metadata import version as get_version
 from typing import Annotated
 
 import typer
@@ -13,9 +14,34 @@ from pragma_cli.config import get_current_context
 app = typer.Typer()
 
 
+def _version_callback(value: bool) -> None:
+    """Print version and exit if --version flag is provided.
+
+    Args:
+        value: True if --version flag was provided.
+
+    Raises:
+        typer.Exit: Always exits after displaying version.
+    """
+    if value:
+        package_version = get_version("pragmatiks-cli")
+        typer.echo(f"pragma {package_version}")
+        raise typer.Exit()
+
+
 @app.callback()
 def main(
     ctx: typer.Context,
+    version: Annotated[
+        bool | None,
+        typer.Option(
+            "--version",
+            "-V",
+            help="Show version and exit",
+            callback=_version_callback,
+            is_eager=True,
+        ),
+    ] = None,
     context: Annotated[
         str | None,
         typer.Option(

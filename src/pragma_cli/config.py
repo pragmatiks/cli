@@ -30,6 +30,18 @@ class ContextConfig(BaseModel):
     """Configuration for a single CLI context."""
 
     api_url: str
+    auth_url: str | None = None
+
+    def get_auth_url(self) -> str:
+        """Get the auth URL, deriving from api_url if not explicitly set.
+
+        Returns:
+            Auth URL for Clerk authentication.
+        """
+        if self.auth_url:
+            return self.auth_url
+        # Derive from api_url: api.pragmatiks.io -> app.pragmatiks.io
+        return self.api_url.replace("://api.", "://app.")
 
 
 class PragmaConfig(BaseModel):

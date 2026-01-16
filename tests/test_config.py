@@ -276,6 +276,38 @@ def test_context_config_model():
     assert context.api_url == "https://api.example.com"
 
 
+def test_context_config_get_auth_url_derived():
+    """Test get_auth_url derives auth URL from api_url."""
+    context = ContextConfig(api_url="https://api.pragmatiks.io")
+
+    # Should derive app.pragmatiks.io from api.pragmatiks.io
+    assert context.get_auth_url() == "https://app.pragmatiks.io"
+
+
+def test_context_config_get_auth_url_explicit():
+    """Test get_auth_url uses explicit auth_url if provided."""
+    context = ContextConfig(api_url="https://api.pragmatiks.io", auth_url="https://custom-auth.example.com")
+
+    # Should use the explicit auth_url
+    assert context.get_auth_url() == "https://custom-auth.example.com"
+
+
+def test_context_config_get_auth_url_localhost():
+    """Test get_auth_url handles localhost API correctly."""
+    context = ContextConfig(api_url="http://localhost:8000")
+
+    # For localhost without 'api.' prefix, the replace does nothing
+    assert context.get_auth_url() == "http://localhost:8000"
+
+
+def test_context_config_get_auth_url_local_api():
+    """Test get_auth_url derives correctly for local dev setup."""
+    context = ContextConfig(api_url="http://api.localhost:8000")
+
+    # Should derive app.localhost:8000 from api.localhost:8000
+    assert context.get_auth_url() == "http://app.localhost:8000"
+
+
 def test_pragma_config_model():
     """Test PragmaConfig model."""
     config = PragmaConfig(

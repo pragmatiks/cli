@@ -12,7 +12,7 @@ from pragma_sdk.config import load_credentials
 from rich import print
 from rich.console import Console
 
-from pragma_cli.config import CREDENTIALS_FILE, get_current_context, load_config
+from pragma_cli.config import CREDENTIALS_FILE, ContextConfig, get_current_context, load_config
 
 
 console = Console()
@@ -22,9 +22,29 @@ app = typer.Typer()
 
 CALLBACK_PORT = int(os.getenv("PRAGMA_AUTH_CALLBACK_PORT", "8765"))
 CALLBACK_PATH = os.getenv("PRAGMA_AUTH_CALLBACK_PATH", "/auth/callback")
-CLERK_FRONTEND_URL = os.getenv("PRAGMA_CLERK_FRONTEND_URL", "https://app.pragmatiks.io")
-CALLBACK_URL = f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
-LOGIN_URL = f"{CLERK_FRONTEND_URL}/auth/callback?callback={CALLBACK_URL}"
+
+
+def _get_callback_url() -> str:
+    """Build the local callback URL for OAuth flow.
+
+    Returns:
+        Callback URL for the local OAuth server.
+    """
+    return f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
+
+
+def _get_login_url(context_config: ContextConfig) -> str:
+    """Build the login URL for a given context.
+
+    Args:
+        context_config: The context configuration to get auth URL from.
+
+    Returns:
+        Full login URL with callback parameter.
+    """
+    auth_url = context_config.get_auth_url()
+    callback_url = _get_callback_url()
+    return f"{auth_url}/auth/callback?callback={callback_url}"
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
@@ -161,22 +181,24 @@ def login(context: str = typer.Option("default", help="Context to authenticate f
         print(f"Available contexts: {', '.join(config.contexts.keys())}")
         raise typer.Exit(1)
 
-    api_url = config.contexts[context].api_url
+    context_config = config.contexts[context]
+    auth_url = context_config.get_auth_url()
+    login_url = _get_login_url(context_config)
 
     print(f"[cyan]Authenticating for context:[/cyan] {context}")
-    print(f"[cyan]API URL:[/cyan] {api_url}")
+    print(f"[cyan]API URL:[/cyan] {context_config.api_url}")
     print()
 
     server = HTTPServer(("localhost", CALLBACK_PORT), CallbackHandler)
 
-    print(f"[yellow]Opening browser to:[/yellow] {CLERK_FRONTEND_URL}")
+    print(f"[yellow]Opening browser to:[/yellow] {auth_url}")
     print()
     print("[dim]If browser doesn't open automatically, visit:[/dim]")
-    print(f"[dim]{LOGIN_URL}[/dim]")
+    print(f"[dim]{login_url}[/dim]")
     print()
     print("[yellow]Waiting for authentication...[/yellow]")
 
-    webbrowser.open(LOGIN_URL)
+    webbrowser.open(login_url)
 
     server.timeout = 300
     server.handle_request()

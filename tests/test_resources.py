@@ -58,8 +58,13 @@ def test_list_resources(cli_runner, mock_cli_client):
     ]
     result = cli_runner.invoke(app, ["resources", "list"])
     assert result.exit_code == 0
-    assert "postgres/database/db1 [ready]" in result.stdout
-    assert "postgres/database/db2 [draft]" in result.stdout
+    # Table columns: Provider, Resource, Name, State, Updated
+    assert "postgres" in result.stdout
+    assert "database" in result.stdout
+    assert "db1" in result.stdout
+    assert "db2" in result.stdout
+    assert "ready" in result.stdout
+    assert "draft" in result.stdout
     mock_cli_client.list_resources.assert_called_once_with(provider=None, resource=None, tags=None)
 
 
@@ -69,7 +74,10 @@ def test_list_resources_with_provider_filter(cli_runner, mock_cli_client):
     ]
     result = cli_runner.invoke(app, ["resources", "list", "--provider", "postgres"])
     assert result.exit_code == 0
-    assert "postgres/database/db1" in result.stdout
+    # Table format: Provider, Resource, Name columns
+    assert "postgres" in result.stdout
+    assert "database" in result.stdout
+    assert "db1" in result.stdout
     mock_cli_client.list_resources.assert_called_once_with(provider="postgres", resource=None, tags=None)
 
 
@@ -84,7 +92,11 @@ def test_get_single_resource(cli_runner, mock_cli_client):
     mock_cli_client.get_resource.return_value = mock_resource("postgres", "database", "test-db", "ready")
     result = cli_runner.invoke(app, ["resources", "get", "postgres/database", "test-db"])
     assert result.exit_code == 0
-    assert "postgres/database/test-db [ready]" in result.stdout
+    # Table format: Provider, Resource, Name, State columns
+    assert "postgres" in result.stdout
+    assert "database" in result.stdout
+    assert "test-db" in result.stdout
+    assert "ready" in result.stdout
     mock_cli_client.get_resource.assert_called_once_with(provider="postgres", resource="database", name="test-db")
 
 
@@ -95,8 +107,13 @@ def test_get_all_resources_of_type(cli_runner, mock_cli_client):
     ]
     result = cli_runner.invoke(app, ["resources", "get", "postgres/database"])
     assert result.exit_code == 0
-    assert "postgres/database/db1 [ready]" in result.stdout
-    assert "postgres/database/db2 [draft]" in result.stdout
+    # Table format: Provider, Resource, Name, State columns
+    assert "postgres" in result.stdout
+    assert "database" in result.stdout
+    assert "db1" in result.stdout
+    assert "db2" in result.stdout
+    assert "ready" in result.stdout
+    assert "draft" in result.stdout
     mock_cli_client.list_resources.assert_called_once_with(provider="postgres", resource="database")
 
 
@@ -483,8 +500,11 @@ def test_list_resources_shows_error_for_failed(cli_runner, mock_cli_client):
     ]
     result = cli_runner.invoke(app, ["resources", "list"])
     assert result.exit_code == 0
-    assert "gcp/secret/failed-resource" in result.stdout
-    assert "[failed]" in result.stdout
+    # Table format with separate columns plus error below
+    assert "gcp" in result.stdout
+    assert "secret" in result.stdout
+    assert "failed-resource" in result.stdout
+    assert "failed" in result.stdout
     assert "Secret Manager API not enabled" in result.stdout
 
 
@@ -499,7 +519,8 @@ def test_get_resource_shows_error_for_failed(cli_runner, mock_cli_client):
     }
     result = cli_runner.invoke(app, ["resources", "get", "gcp/secret", "failed-resource"])
     assert result.exit_code == 0
-    assert "[failed]" in result.stdout
+    # Table format with error below
+    assert "failed" in result.stdout
     assert "Credentials invalid" in result.stdout
 
 

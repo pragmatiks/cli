@@ -203,20 +203,50 @@ def list_resources(
         console.print("[dim]No resources found.[/dim]")
         return
 
+    _print_resources_table(resources)
+
+
+def _print_resources_table(resources: list[dict]) -> None:
+    """Print resources in a formatted table.
+
+    Args:
+        resources: List of resource dictionaries to display.
+    """
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Provider")
+    table.add_column("Resource")
+    table.add_column("Name")
+    table.add_column("State")
+    table.add_column("Updated")
+
+    # Track failed resources to show errors after table
+    failed_resources: list[tuple[str, str]] = []
+
     for res in resources:
-        line = f"{res['provider']}/{res['resource']}/{res['name']} {format_state(res['lifecycle_state'])}"
-        print(line)
-        # Show error for failed resources
+        state = _format_state_color(res["lifecycle_state"])
+        updated = res.get("updated_at", "[dim]-[/dim]")
+        if updated and updated != "[dim]-[/dim]":
+            # Truncate to datetime portion if it's a full ISO string
+            updated = updated[:19].replace("T", " ") if len(updated) > 19 else updated
+
+        table.add_row(
+            res["provider"],
+            res["resource"],
+            res["name"],
+            state,
+            updated,
+        )
+
+        # Track failed resources for error display
         if res.get("lifecycle_state") == "failed" and res.get("error"):
-            console.print(f"  [red]Error:[/red] {escape(res['error'])}")
+            resource_id = f"{res['provider']}/{res['resource']}/{res['name']}"
+            failed_resources.append((resource_id, res["error"]))
 
+    console.print(table)
 
-def _print_resource_line(res: dict, prefix: str = "") -> None:
-    """Print a single resource line with optional error for failed resources."""
-    line = f"{prefix}{res['provider']}/{res['resource']}/{res['name']} {format_state(res['lifecycle_state'])}"
-    print(line)
-    if res.get("lifecycle_state") == "failed" and res.get("error"):
-        console.print(f"  [red]Error:[/red] {escape(res['error'])}")
+    # Show errors for failed resources below the table
+    for resource_id, error in failed_resources:
+        console.print(f"  [red]{resource_id}:[/red] {escape(error)}")
 
 
 @app.command()
@@ -229,10 +259,13 @@ def get(
     provider, resource = parse_resource_id(resource_id)
     if name:
         res = client.get_resource(provider=provider, resource=resource, name=name)
-        _print_resource_line(res)
+        _print_resources_table([res])
     else:
-        for res in client.list_resources(provider=provider, resource=resource):
-            _print_resource_line(res)
+        resources = list(client.list_resources(provider=provider, resource=resource))
+        if not resources:
+            console.print("[dim]No resources found.[/dim]")
+            return
+        _print_resources_table(resources)
 
 
 def _format_state_color(state: str) -> str:
