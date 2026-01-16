@@ -19,7 +19,7 @@ from pragma_cli.commands.completions import (
     completion_resource_ids,
     completion_resource_names,
 )
-from pragma_cli.helpers import parse_resource_id
+from pragma_cli.helpers import OutputFormat, output_data, parse_resource_id
 
 
 console = Console()
@@ -144,33 +144,12 @@ def format_state(state: str) -> str:
     return escape(f"[{state}]")
 
 
-@app.command("types")
-def list_resource_types(
-    provider: Annotated[str | None, typer.Option("--provider", "-p", help="Filter by provider")] = None,
-):
-    """List available resource types from deployed providers.
+def _print_resource_types_table(types: list[dict]) -> None:
+    """Print resource types in a formatted table.
 
-    Displays resource definitions (types) that have been registered by providers.
-    Use this to discover what resources you can create.
-
-    Examples:
-        pragma resources types
-        pragma resources types --provider gcp
-
-    Raises:
-        typer.Exit: If an error occurs while fetching resource types.
+    Args:
+        types: List of resource type dictionaries to display.
     """
-    client = get_client()
-    try:
-        types = client.list_resource_types(provider=provider)
-    except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
-        raise typer.Exit(1)
-
-    if not types:
-        console.print("[dim]No resource types found.[/dim]")
-        return
-
     console.print()
     table = Table(show_header=True, header_style="bold")
     table.add_column("Provider")
@@ -189,13 +168,52 @@ def list_resource_types(
     console.print()
 
 
+@app.command("types")
+def list_resource_types(
+    provider: Annotated[str | None, typer.Option("--provider", "-p", help="Filter by provider")] = None,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o", help="Output format")] = OutputFormat.TABLE,
+):
+    """List available resource types from deployed providers.
+
+    Displays resource definitions (types) that have been registered by providers.
+    Use this to discover what resources you can create.
+
+    Examples:
+        pragma resources types
+        pragma resources types --provider gcp
+        pragma resources types -o json
+
+    Raises:
+        typer.Exit: If an error occurs while fetching resource types.
+    """
+    client = get_client()
+    try:
+        types = client.list_resource_types(provider=provider)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)
+
+    if not types:
+        console.print("[dim]No resource types found.[/dim]")
+        return
+
+    output_data(types, output, table_renderer=_print_resource_types_table)
+
+
 @app.command("list")
 def list_resources(
     provider: Annotated[str | None, typer.Option("--provider", "-p", help="Filter by provider")] = None,
     resource: Annotated[str | None, typer.Option("--resource", "-r", help="Filter by resource type")] = None,
     tags: Annotated[list[str] | None, typer.Option("--tag", "-t", help="Filter by tags")] = None,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o", help="Output format")] = OutputFormat.TABLE,
 ):
-    """List resources, optionally filtered by provider, resource type, or tags."""
+    """List resources, optionally filtered by provider, resource type, or tags.
+
+    Examples:
+        pragma resources list
+        pragma resources list --provider gcp
+        pragma resources list -o json
+    """
     client = get_client()
     resources = list(client.list_resources(provider=provider, resource=resource, tags=tags))
 
@@ -203,7 +221,7 @@ def list_resources(
         console.print("[dim]No resources found.[/dim]")
         return
 
-    _print_resources_table(resources)
+    output_data(resources, output, table_renderer=_print_resources_table)
 
 
 def _print_resources_table(resources: list[dict]) -> None:
@@ -253,19 +271,26 @@ def _print_resources_table(resources: list[dict]) -> None:
 def get(
     resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
     name: Annotated[str | None, typer.Argument(autocompletion=completion_resource_names)] = None,
+    output: Annotated[OutputFormat, typer.Option("--output", "-o", help="Output format")] = OutputFormat.TABLE,
 ):
-    """Get resources by provider/resource type, optionally filtered by name."""
+    """Get resources by provider/resource type, optionally filtered by name.
+
+    Examples:
+        pragma resources get gcp/secret
+        pragma resources get gcp/secret my-secret
+        pragma resources get gcp/secret my-secret -o json
+    """
     client = get_client()
     provider, resource = parse_resource_id(resource_id)
     if name:
         res = client.get_resource(provider=provider, resource=resource, name=name)
-        _print_resources_table([res])
+        output_data([res], output, table_renderer=_print_resources_table)
     else:
         resources = list(client.list_resources(provider=provider, resource=resource))
         if not resources:
             console.print("[dim]No resources found.[/dim]")
             return
-        _print_resources_table(resources)
+        output_data(resources, output, table_renderer=_print_resources_table)
 
 
 def _format_state_color(state: str) -> str:
@@ -377,6 +402,7 @@ def _print_resource_details(res: dict) -> None:
 def describe(
     resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
     name: Annotated[str, typer.Argument(autocompletion=completion_resource_names)],
+    output: Annotated[OutputFormat, typer.Option("--output", "-o", help="Output format")] = OutputFormat.TABLE,
 ):
     """Show detailed information about a resource.
 
@@ -385,6 +411,7 @@ def describe(
     Examples:
         pragma resources describe gcp/secret my-test-secret
         pragma resources describe postgres/database my-db
+        pragma resources describe gcp/secret my-secret -o json
 
     Raises:
         typer.Exit: If the resource is not found or an error occurs.
@@ -398,7 +425,7 @@ def describe(
         console.print(f"[red]Error:[/red] {_format_api_error(e)}")
         raise typer.Exit(1)
 
-    _print_resource_details(res)
+    output_data(res, output, table_renderer=_print_resource_details)
 
 
 @app.command()

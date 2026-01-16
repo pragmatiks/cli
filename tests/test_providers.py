@@ -1,11 +1,13 @@
 """Tests for CLI providers commands."""
 
+import json
 import tarfile
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 
 import pytest
+import yaml
 from pragma_sdk import (
     BuildInfo,
     BuildStatus,
@@ -479,3 +481,91 @@ def test_list_providers_handles_failed_status(cli_runner, mock_pragma_client):
     assert result.exit_code == 0
     assert "broken" in result.output
     assert "failed" in result.output
+
+
+# --- Tests for --output/-o flag ---
+
+
+def test_list_providers_json_output(cli_runner, mock_pragma_client):
+    """List command outputs JSON when -o json is specified."""
+    mock_pragma_client.list_providers.return_value = [
+        ProviderInfo(
+            provider_id="postgres",
+            current_version="20250114.120000",
+            deployment_status=DeploymentStatus.AVAILABLE,
+            updated_at=datetime(2025, 1, 14, 12, 0, 0, tzinfo=UTC),
+        ),
+        ProviderInfo(
+            provider_id="redis",
+            current_version="20250114.100000",
+            deployment_status=DeploymentStatus.PROGRESSING,
+            updated_at=datetime(2025, 1, 14, 10, 0, 0, tzinfo=UTC),
+        ),
+    ]
+
+    result = cli_runner.invoke(app, ["providers", "list", "-o", "json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["provider_id"] == "postgres"
+    assert data[0]["current_version"] == "20250114.120000"
+    assert data[0]["deployment_status"] == "available"
+    assert data[1]["provider_id"] == "redis"
+
+
+def test_list_providers_yaml_output(cli_runner, mock_pragma_client):
+    """List command outputs YAML when --output yaml is specified."""
+    mock_pragma_client.list_providers.return_value = [
+        ProviderInfo(
+            provider_id="postgres",
+            current_version="20250114.120000",
+            deployment_status=DeploymentStatus.AVAILABLE,
+            updated_at=datetime(2025, 1, 14, 12, 0, 0, tzinfo=UTC),
+        ),
+    ]
+
+    result = cli_runner.invoke(app, ["providers", "list", "--output", "yaml"])
+
+    assert result.exit_code == 0
+    data = yaml.safe_load(result.output)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["provider_id"] == "postgres"
+
+
+def test_status_json_output(cli_runner, mock_pragma_client):
+    """Status command outputs JSON when -o json is specified."""
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
+        status=DeploymentStatus.AVAILABLE,
+        version="20250114.153045",
+        updated_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
+        healthy=True,
+    )
+
+    result = cli_runner.invoke(app, ["providers", "status", "test", "-o", "json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["provider_id"] == "test"
+    assert data["status"] == "available"
+    assert data["version"] == "20250114.153045"
+    assert data["healthy"] is True
+
+
+def test_status_yaml_output(cli_runner, mock_pragma_client):
+    """Status command outputs YAML when --output yaml is specified."""
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
+        status=DeploymentStatus.PROGRESSING,
+        version="20250114.160000",
+        healthy=False,
+    )
+
+    result = cli_runner.invoke(app, ["providers", "status", "test", "--output", "yaml"])
+
+    assert result.exit_code == 0
+    data = yaml.safe_load(result.output)
+    assert data["provider_id"] == "test"
+    assert data["status"] == "progressing"
+    assert data["healthy"] is False

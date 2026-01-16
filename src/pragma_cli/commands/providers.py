@@ -29,6 +29,7 @@ from rich.table import Table
 
 from pragma_cli import get_client
 from pragma_cli.commands.completions import completion_provider_ids, completion_provider_versions
+from pragma_cli.helpers import OutputFormat, output_data
 
 
 app = typer.Typer(help="Provider management commands")
@@ -117,7 +118,9 @@ def get_template_source() -> str:
 
 
 @app.command("list")
-def list_providers():
+def list_providers(
+    output: Annotated[OutputFormat, typer.Option("--output", "-o", help="Output format")] = OutputFormat.TABLE,
+):
     """List all deployed providers.
 
     Shows providers with their deployment status. Displays:
@@ -126,8 +129,9 @@ def list_providers():
     - Status (running/stopped)
     - Last deployed timestamp
 
-    Example:
+    Examples:
         pragma providers list
+        pragma providers list -o json
 
     Raises:
         typer.Exit: If authentication is missing or API call fails.
@@ -158,7 +162,12 @@ def list_providers():
         console.print("[dim]No providers found.[/dim]")
         return
 
-    _print_providers_table(providers)
+    if output == OutputFormat.TABLE:
+        _print_providers_table(providers)
+    else:
+        # Convert Pydantic models to dicts for JSON/YAML output
+        data = [p.model_dump(mode="json") for p in providers]
+        output_data(data, output)
 
 
 def _print_providers_table(providers: list[ProviderInfo]) -> None:
@@ -777,6 +786,7 @@ def status(
             autocompletion=completion_provider_ids,
         ),
     ],
+    output: Annotated[OutputFormat, typer.Option("--output", "-o", help="Output format")] = OutputFormat.TABLE,
 ):
     """Check the deployment status of a provider.
 
@@ -786,9 +796,10 @@ def status(
     - Health status
     - Last updated timestamp
 
-    Example:
+    Examples:
         pragma providers status postgres
         pragma providers status my-provider
+        pragma providers status postgres -o json
 
     Raises:
         typer.Exit: If deployment not found or status check fails.
@@ -811,7 +822,13 @@ def status(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(1)
 
-    _print_deployment_status(provider_id, result)
+    if output == OutputFormat.TABLE:
+        _print_deployment_status(provider_id, result)
+    else:
+        # Convert Pydantic model to dict for JSON/YAML output
+        data = result.model_dump(mode="json")
+        data["provider_id"] = provider_id  # Include provider_id in output
+        output_data(data, output)
 
 
 def _print_deployment_status(provider_id: str, result) -> None:

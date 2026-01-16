@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from pragma_cli.main import app
 
@@ -658,3 +660,138 @@ def test_types_shows_error(cli_runner, mock_cli_client):
     result = cli_runner.invoke(app, ["resources", "types"])
     assert result.exit_code == 1
     assert "Error" in result.stdout
+
+
+# --- Tests for --output/-o flag ---
+
+
+def test_list_resources_json_output(cli_runner, mock_cli_client):
+    """Test list resources with JSON output format."""
+    mock_cli_client.list_resources.return_value = [
+        mock_resource("postgres", "database", "db1", "ready"),
+        mock_resource("postgres", "database", "db2", "draft"),
+    ]
+    result = cli_runner.invoke(app, ["resources", "list", "-o", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["provider"] == "postgres"
+    assert data[0]["resource"] == "database"
+    assert data[0]["name"] == "db1"
+    assert data[0]["lifecycle_state"] == "ready"
+
+
+def test_list_resources_yaml_output(cli_runner, mock_cli_client):
+    """Test list resources with YAML output format."""
+    mock_cli_client.list_resources.return_value = [
+        mock_resource("postgres", "database", "db1", "ready"),
+    ]
+    result = cli_runner.invoke(app, ["resources", "list", "--output", "yaml"])
+    assert result.exit_code == 0
+    data = yaml.safe_load(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["provider"] == "postgres"
+    assert data[0]["name"] == "db1"
+
+
+def test_get_resource_json_output(cli_runner, mock_cli_client):
+    """Test get single resource with JSON output format."""
+    mock_cli_client.get_resource.return_value = mock_resource("postgres", "database", "test-db", "ready")
+    result = cli_runner.invoke(app, ["resources", "get", "postgres/database", "test-db", "-o", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    # get returns a list even for single resource
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["provider"] == "postgres"
+    assert data[0]["name"] == "test-db"
+
+
+def test_get_resources_by_type_json_output(cli_runner, mock_cli_client):
+    """Test get all resources of type with JSON output format."""
+    mock_cli_client.list_resources.return_value = [
+        mock_resource("postgres", "database", "db1", "ready"),
+        mock_resource("postgres", "database", "db2", "draft"),
+    ]
+    result = cli_runner.invoke(app, ["resources", "get", "postgres/database", "-o", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 2
+
+
+def test_describe_json_output(cli_runner, mock_cli_client):
+    """Test describe resource with JSON output format."""
+    mock_cli_client.get_resource.return_value = {
+        "provider": "gcp",
+        "resource": "secret",
+        "name": "my-secret",
+        "lifecycle_state": "ready",
+        "config": {"project_id": "my-project"},
+        "outputs": {"secret_name": "projects/my-project/secrets/test-secret"},
+        "dependencies": [],
+        "tags": ["test"],
+        "created_at": "2026-01-16T10:00:00Z",
+        "updated_at": "2026-01-16T10:30:00Z",
+        "error": None,
+    }
+    result = cli_runner.invoke(app, ["resources", "describe", "gcp/secret", "my-secret", "-o", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["provider"] == "gcp"
+    assert data["name"] == "my-secret"
+    assert data["config"]["project_id"] == "my-project"
+    assert data["outputs"]["secret_name"] == "projects/my-project/secrets/test-secret"
+
+
+def test_describe_yaml_output(cli_runner, mock_cli_client):
+    """Test describe resource with YAML output format."""
+    mock_cli_client.get_resource.return_value = {
+        "provider": "gcp",
+        "resource": "secret",
+        "name": "my-secret",
+        "lifecycle_state": "ready",
+        "config": {"project_id": "my-project"},
+        "outputs": {},
+        "dependencies": [],
+        "tags": [],
+        "created_at": "2026-01-16T10:00:00Z",
+        "updated_at": "2026-01-16T10:30:00Z",
+        "error": None,
+    }
+    result = cli_runner.invoke(app, ["resources", "describe", "gcp/secret", "my-secret", "--output", "yaml"])
+    assert result.exit_code == 0
+    data = yaml.safe_load(result.stdout)
+    assert data["provider"] == "gcp"
+    assert data["name"] == "my-secret"
+
+
+def test_types_json_output(cli_runner, mock_cli_client):
+    """Test types command with JSON output format."""
+    mock_cli_client.list_resource_types.return_value = [
+        {"provider": "gcp", "resource": "secret", "description": "GCP Secret Manager secret"},
+        {"provider": "postgres", "resource": "database", "description": None},
+    ]
+    result = cli_runner.invoke(app, ["resources", "types", "-o", "json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 2
+    assert data[0]["provider"] == "gcp"
+    assert data[0]["resource"] == "secret"
+    assert data[0]["description"] == "GCP Secret Manager secret"
+
+
+def test_types_yaml_output(cli_runner, mock_cli_client):
+    """Test types command with YAML output format."""
+    mock_cli_client.list_resource_types.return_value = [
+        {"provider": "gcp", "resource": "secret", "description": "GCP Secret Manager secret"},
+    ]
+    result = cli_runner.invoke(app, ["resources", "types", "--output", "yaml"])
+    assert result.exit_code == 0
+    data = yaml.safe_load(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["provider"] == "gcp"
