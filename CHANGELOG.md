@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.1 (2026-01-18)
+
+### Fix
+
+- remove workspace-only uv sources for isolated rig worktree
+
 ## v0.12.0 (2026-01-16)
 
 ### Feat
