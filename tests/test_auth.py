@@ -203,8 +203,6 @@ contexts:
 
 def test_whoami_command_with_credentials(cli_runner, tmp_path, monkeypatch, mocker):
     """Test whoami command with stored credentials and API response."""
-    from pragma_sdk import UserInfo
-
     config_file = tmp_path / "config"
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(
@@ -223,13 +221,15 @@ contexts:
 
     save_credentials("default_token", "default")
 
+    # Create mock user info object with expected attributes
+    mock_user_info = mocker.MagicMock()
+    mock_user_info.user_id = "user_123"
+    mock_user_info.email = "test@example.com"
+    mock_user_info.organization_id = "org_456"
+    mock_user_info.organization_name = "Test Org"
+
     mock_client = mocker.MagicMock()
-    mock_client.get_me.return_value = UserInfo(
-        user_id="user_123",
-        email="test@example.com",
-        organization_id="org_456",
-        organization_name="Test Org",
-    )
+    mock_client.get_me.return_value = mock_user_info
     mocker.patch("pragma_cli.commands.auth.PragmaClient", return_value=mock_client)
 
     result = cli_runner.invoke(app, ["auth", "whoami"])
