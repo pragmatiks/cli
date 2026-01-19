@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.3 (2026-01-19)
+
+### Fix
+
+- correct error messages to reference `pragma auth login`
+
 ## v0.12.2 (2026-01-18)
 
 ### Fix
