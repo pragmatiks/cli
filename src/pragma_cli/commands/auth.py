@@ -162,20 +162,27 @@ def clear_credentials(context_name: str | None = None):
 
 
 @app.command()
-def login(context: str = typer.Option("default", help="Context to authenticate for")):
+def login(
+    context: str | None = typer.Option(None, help="Context to authenticate for (default: current)"),
+):
     """Authenticate with Pragma using browser-based Clerk login.
 
     Opens your default browser to Clerk authentication page. After successful
     login, your credentials are stored locally in ~/.config/pragma/credentials.
 
     Example:
-        pragma login
-        pragma login --context production
+        pragma auth login
+        pragma auth login --context production
 
     Raises:
         typer.Exit: If context not found or authentication fails/times out.
     """
     config = load_config()
+
+    # Use current context if not specified
+    if context is None:
+        context = config.current_context
+
     if context not in config.contexts:
         print(f"[red]\u2717[/red] Context '{context}' not found")
         print(f"Available contexts: {', '.join(config.contexts.keys())}")
