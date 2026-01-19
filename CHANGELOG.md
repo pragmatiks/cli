@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.12.4 (2026-01-19)
+
+### Fix
+
+- add --auth-url flag and improve localhost auth URL handling
+
+### Refactor
+
+- use urlparse for precise localhost detection
+
 ## v0.12.3 (2026-01-19)
 
 ### Fix
