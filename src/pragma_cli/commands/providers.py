@@ -600,8 +600,6 @@ def _deploy_provider(client: PragmaClient, provider_id: str, version: str | None
         deploy_result = client.deploy_provider(provider_id, version)
 
     console.print(f"[green]Deployment started:[/green] {provider_id}")
-    if deploy_result.image:
-        console.print(f"[dim]Image:[/dim] {deploy_result.image}")
     console.print(f"[dim]Status:[/dim] {deploy_result.status.value}")
 
 
@@ -857,12 +855,7 @@ def _print_deployment_status(provider_id: str, result) -> None:
 
     table.add_row("Status", f"[{status_color}]{result.status.value}[/{status_color}]")
 
-    if result.image:
-        table.add_row("Image", result.image)
-
-    # Healthy is determined by having ready replicas
-    healthy = result.ready_replicas > 0
-    healthy_display = "[green]yes[/green]" if healthy else "[red]no[/red]"
+    healthy_display = "[green]yes[/green]" if result.healthy else "[red]no[/red]"
     table.add_row("Healthy", healthy_display)
 
     if result.updated_at:

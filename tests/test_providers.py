@@ -4,7 +4,6 @@ import json
 import tarfile
 from datetime import UTC, datetime
 from io import BytesIO
-from pathlib import Path
 
 import pytest
 import yaml
@@ -14,6 +13,7 @@ from pragma_sdk import (
     DeploymentResult,
     DeploymentStatus,
     ProviderInfo,
+    ProviderStatus,
     PushResult,
 )
 from pytest_mock import MockerFixture
@@ -237,12 +237,11 @@ def test_push_with_deploy_flag_deploys_after_build(cli_runner, provider_project,
         status=BuildStatus.SUCCESS,
         created_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
     )
-    mock_pragma_client.deploy_provider.return_value = DeploymentResult(
-        deployment_name="test",
+    mock_pragma_client.deploy_provider.return_value = ProviderStatus(
         status=DeploymentStatus.PROGRESSING,
-        image="20250114.153045",
+        version="20250114.153045",
         updated_at=None,
-        ready_replicas=0,
+        healthy=False,
     )
 
     result = cli_runner.invoke(app, ["providers", "push", "--deploy"])
@@ -411,12 +410,11 @@ def test_detect_provider_package_returns_none_without_pyproject(tmp_path, monkey
 
 def test_status_displays_deployment_info(cli_runner, mock_pragma_client):
     """Status command displays deployment information."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="test",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.AVAILABLE,
-        image="registry.example.com/test:20250114.153045",
+        version="20250114.153045",
         updated_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
-        ready_replicas=1,
+        healthy=True,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test"])
@@ -425,9 +423,8 @@ def test_status_displays_deployment_info(cli_runner, mock_pragma_client):
     assert "Provider:" in result.output
     assert "test" in result.output
     assert "available" in result.output
-    assert "20250114.153045" in result.output
     assert "2025-01-14" in result.output
-    assert "yes" in result.output  # healthy status (ready_replicas > 0)
+    assert "yes" in result.output  # healthy status
 
 
 def test_status_handles_not_found(cli_runner, mock_pragma_client):
@@ -447,34 +444,32 @@ def test_status_handles_not_found(cli_runner, mock_pragma_client):
 
 def test_status_handles_progressing_deployment(cli_runner, mock_pragma_client):
     """Status command shows progressing status correctly."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="test",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.PROGRESSING,
-        image="registry.example.com/test:20250114.160000",
-        ready_replicas=0,
+        version="20250114.160000",
+        healthy=False,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test"])
 
     assert result.exit_code == 0
     assert "progressing" in result.output
-    assert "no" in result.output  # not healthy (ready_replicas = 0)
+    assert "no" in result.output  # not healthy
 
 
 def test_status_handles_failed_deployment(cli_runner, mock_pragma_client):
     """Status command shows failed status with error message."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="test",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.FAILED,
-        image="registry.example.com/test:20250114.170000",
-        ready_replicas=0,
+        version="20250114.170000",
+        healthy=False,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test"])
 
     assert result.exit_code == 0
     assert "failed" in result.output
-    assert "no" in result.output  # not healthy (ready_replicas = 0)
+    assert "no" in result.output  # not healthy
 
 
 def test_list_providers_displays_table(cli_runner, mock_pragma_client):
@@ -614,12 +609,11 @@ def test_list_providers_yaml_output(cli_runner, mock_pragma_client):
 
 def test_status_json_output(cli_runner, mock_pragma_client):
     """Status command outputs JSON when -o json is specified."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="test",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.AVAILABLE,
-        image="registry.example.com/test:20250114.153045",
+        version="20250114.153045",
         updated_at=datetime(2025, 1, 14, 15, 30, 45, tzinfo=UTC),
-        ready_replicas=1,
+        healthy=True,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test", "-o", "json"])
@@ -628,17 +622,15 @@ def test_status_json_output(cli_runner, mock_pragma_client):
     data = json.loads(result.output)
     assert data["provider_id"] == "test"
     assert data["status"] == "available"
-    assert data["image"] == "registry.example.com/test:20250114.153045"
-    assert data["ready_replicas"] == 1
+    assert data["healthy"] is True
 
 
 def test_status_yaml_output(cli_runner, mock_pragma_client):
     """Status command outputs YAML when --output yaml is specified."""
-    mock_pragma_client.get_deployment_status.return_value = DeploymentResult(
-        deployment_name="test",
+    mock_pragma_client.get_deployment_status.return_value = ProviderStatus(
         status=DeploymentStatus.PROGRESSING,
-        image="registry.example.com/test:20250114.160000",
-        ready_replicas=0,
+        version="20250114.160000",
+        healthy=False,
     )
 
     result = cli_runner.invoke(app, ["providers", "status", "test", "--output", "yaml"])
@@ -647,4 +639,4 @@ def test_status_yaml_output(cli_runner, mock_pragma_client):
     data = yaml.safe_load(result.output)
     assert data["provider_id"] == "test"
     assert data["status"] == "progressing"
-    assert data["ready_replicas"] == 0
+    assert data["healthy"] is False
