@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.7 (2026-01-22)
+
+### Fix
+
+- update provider template URL to pragma-providers (#4)
+
 ## v0.12.6 (2026-01-20)
 
 ### Fix
