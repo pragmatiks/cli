@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.13.0 (2026-01-23)
+
+### Feat
+
+- add pragma resources tags command (#5)
+
 ## v0.12.7 (2026-01-22)
 
 ### Fix
