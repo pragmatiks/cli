@@ -242,10 +242,12 @@ def _print_resources_table(resources: list[dict]) -> None:
 
     for res in resources:
         state = _format_state_color(res["lifecycle_state"])
-        updated = res.get("updated_at", "[dim]-[/dim]")
-        if updated and updated != "[dim]-[/dim]":
-            # Truncate to datetime portion if it's a full ISO string
-            updated = updated[:19].replace("T", " ") if len(updated) > 19 else updated
+        updated = res.get("updated_at")
+        # Truncate to datetime portion if present
+        if updated:
+            updated = updated[:19].replace("T", " ")
+        else:
+            updated = "[dim]-[/dim]"
 
         table.add_row(
             res["provider"],
@@ -491,6 +493,49 @@ tags_app = typer.Typer()
 app.add_typer(tags_app, name="tags", help="Manage resource tags.")
 
 
+def _fetch_resource(resource_id: str, name: str) -> tuple[str, str, dict]:
+    """Fetch a resource for tag operations.
+
+    Returns:
+        Tuple of (provider, resource_type, resource_data).
+
+    Raises:
+        typer.Exit: If the resource is not found.
+    """
+    client = get_client()
+    provider, resource = parse_resource_id(resource_id)
+    try:
+        data = client.get_resource(provider=provider, resource=resource, name=name)
+        return provider, resource, data
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)
+
+
+def _apply_tags(
+    provider: str, resource: str, name: str, config: dict, tags: list[str] | None
+) -> None:
+    """Apply updated tags to a resource.
+
+    Raises:
+        typer.Exit: If the operation fails.
+    """
+    client = get_client()
+    try:
+        client.apply_resource(
+            resource={
+                "provider": provider,
+                "resource": resource,
+                "name": name,
+                "config": config,
+                "tags": tags,
+            }
+        )
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)
+
+
 @tags_app.command("list")
 def tags_list(
     resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
@@ -500,20 +545,10 @@ def tags_list(
 
     Examples:
         pragma resources tags list gcp/secret my-secret
-
-    Raises:
-        typer.Exit: If the resource is not found.
     """
-    client = get_client()
-    provider, resource = parse_resource_id(resource_id)
-
-    try:
-        res = client.get_resource(provider=provider, resource=resource, name=name)
-    except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
-        raise typer.Exit(1)
-
+    _, _, res = _fetch_resource(resource_id, name)
     tags = res.get("tags") or []
+
     if not tags:
         console.print("[dim]No tags.[/dim]")
         return
@@ -541,37 +576,16 @@ def tags_add(
         console.print("[red]Error:[/red] At least one --tag is required.")
         raise typer.Exit(1)
 
-    client = get_client()
-    provider, resource = parse_resource_id(resource_id)
-
-    try:
-        res = client.get_resource(provider=provider, resource=resource, name=name)
-    except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
-        raise typer.Exit(1)
-
+    provider, resource, res = _fetch_resource(resource_id, name)
     current_tags = set(res.get("tags") or [])
     new_tags = set(tags)
     added = new_tags - current_tags
-    updated_tags = sorted(current_tags | new_tags)
 
     if not added:
         console.print("[dim]Tags already present, nothing to add.[/dim]")
         return
 
-    try:
-        client.apply_resource(
-            resource={
-                "provider": provider,
-                "resource": resource,
-                "name": name,
-                "config": res.get("config", {}),
-                "tags": updated_tags,
-            }
-        )
-    except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
-        raise typer.Exit(1)
+    _apply_tags(provider, resource, name, res.get("config", {}), sorted(current_tags | new_tags))
 
     for tag in sorted(added):
         console.print(f"[green]+[/green] {tag}")
@@ -596,37 +610,17 @@ def tags_remove(
         console.print("[red]Error:[/red] At least one --tag is required.")
         raise typer.Exit(1)
 
-    client = get_client()
-    provider, resource = parse_resource_id(resource_id)
-
-    try:
-        res = client.get_resource(provider=provider, resource=resource, name=name)
-    except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
-        raise typer.Exit(1)
-
+    provider, resource, res = _fetch_resource(resource_id, name)
     current_tags = set(res.get("tags") or [])
     to_remove = set(tags)
     removed = current_tags & to_remove
-    updated_tags = sorted(current_tags - to_remove)
 
     if not removed:
         console.print("[dim]Tags not present, nothing to remove.[/dim]")
         return
 
-    try:
-        client.apply_resource(
-            resource={
-                "provider": provider,
-                "resource": resource,
-                "name": name,
-                "config": res.get("config", {}),
-                "tags": updated_tags if updated_tags else None,
-            }
-        )
-    except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
-        raise typer.Exit(1)
+    updated = sorted(current_tags - to_remove)
+    _apply_tags(provider, resource, name, res.get("config", {}), updated or None)
 
     for tag in sorted(removed):
         console.print(f"[red]-[/red] {tag}")
