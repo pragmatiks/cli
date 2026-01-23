@@ -242,10 +242,12 @@ def _print_resources_table(resources: list[dict]) -> None:
 
     for res in resources:
         state = _format_state_color(res["lifecycle_state"])
-        updated = res.get("updated_at", "[dim]-[/dim]")
-        if updated and updated != "[dim]-[/dim]":
-            # Truncate to datetime portion if it's a full ISO string
-            updated = updated[:19].replace("T", " ") if len(updated) > 19 else updated
+        updated = res.get("updated_at")
+        # Truncate to datetime portion if present
+        if updated:
+            updated = updated[:19].replace("T", " ")
+        else:
+            updated = "[dim]-[/dim]"
 
         table.add_row(
             res["provider"],
@@ -484,3 +486,141 @@ def delete(
     except httpx.HTTPStatusError as e:
         console.print(f"[red]Error deleting {resource_id}/{name}:[/red] {_format_api_error(e)}")
         raise typer.Exit(1)
+
+
+# Tags subcommand group
+tags_app = typer.Typer()
+app.add_typer(tags_app, name="tags", help="Manage resource tags.")
+
+
+def _fetch_resource(resource_id: str, name: str) -> tuple[str, str, dict]:
+    """Fetch a resource for tag operations.
+
+    Returns:
+        Tuple of (provider, resource_type, resource_data).
+
+    Raises:
+        typer.Exit: If the resource is not found.
+    """
+    client = get_client()
+    provider, resource = parse_resource_id(resource_id)
+    try:
+        data = client.get_resource(provider=provider, resource=resource, name=name)
+        return provider, resource, data
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)
+
+
+def _apply_tags(
+    provider: str, resource: str, name: str, config: dict, tags: list[str] | None
+) -> None:
+    """Apply updated tags to a resource.
+
+    Raises:
+        typer.Exit: If the operation fails.
+    """
+    client = get_client()
+    try:
+        client.apply_resource(
+            resource={
+                "provider": provider,
+                "resource": resource,
+                "name": name,
+                "config": config,
+                "tags": tags,
+            }
+        )
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error:[/red] {_format_api_error(e)}")
+        raise typer.Exit(1)
+
+
+@tags_app.command("list")
+def tags_list(
+    resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
+    name: Annotated[str, typer.Argument(autocompletion=completion_resource_names)],
+):
+    """List tags for a resource.
+
+    Examples:
+        pragma resources tags list gcp/secret my-secret
+    """
+    _, _, res = _fetch_resource(resource_id, name)
+    tags = res.get("tags") or []
+
+    if not tags:
+        console.print("[dim]No tags.[/dim]")
+        return
+
+    for tag in tags:
+        console.print(f"  {tag}")
+
+
+@tags_app.command("add")
+def tags_add(
+    resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
+    name: Annotated[str, typer.Argument(autocompletion=completion_resource_names)],
+    tags: Annotated[list[str], typer.Option("--tag", "-t", help="Tag to add (can be repeated)")],
+):
+    """Add tags to a resource.
+
+    Examples:
+        pragma resources tags add gcp/secret my-secret --tag production
+        pragma resources tags add gcp/secret my-secret -t prod -t api
+
+    Raises:
+        typer.Exit: If the resource is not found or the operation fails.
+    """
+    if not tags:
+        console.print("[red]Error:[/red] At least one --tag is required.")
+        raise typer.Exit(1)
+
+    provider, resource, res = _fetch_resource(resource_id, name)
+    current_tags = set(res.get("tags") or [])
+    new_tags = set(tags)
+    added = new_tags - current_tags
+
+    if not added:
+        console.print("[dim]Tags already present, nothing to add.[/dim]")
+        return
+
+    _apply_tags(provider, resource, name, res.get("config", {}), sorted(current_tags | new_tags))
+
+    for tag in sorted(added):
+        console.print(f"[green]+[/green] {tag}")
+
+
+@tags_app.command("remove")
+def tags_remove(
+    resource_id: Annotated[str, typer.Argument(autocompletion=completion_resource_ids)],
+    name: Annotated[str, typer.Argument(autocompletion=completion_resource_names)],
+    tags: Annotated[list[str], typer.Option("--tag", "-t", help="Tag to remove (can be repeated)")],
+):
+    """Remove tags from a resource.
+
+    Examples:
+        pragma resources tags remove gcp/secret my-secret --tag staging
+        pragma resources tags remove gcp/secret my-secret -t old -t deprecated
+
+    Raises:
+        typer.Exit: If the resource is not found or the operation fails.
+    """
+    if not tags:
+        console.print("[red]Error:[/red] At least one --tag is required.")
+        raise typer.Exit(1)
+
+    provider, resource, res = _fetch_resource(resource_id, name)
+    current_tags = set(res.get("tags") or [])
+    to_remove = set(tags)
+    removed = current_tags & to_remove
+
+    if not removed:
+        console.print("[dim]Tags not present, nothing to remove.[/dim]")
+        return
+
+    updated = sorted(current_tags - to_remove)
+    _apply_tags(provider, resource, name, res.get("config", {}), updated or None)
+
+    for tag in sorted(removed):
+        console.print(f"[red]-[/red] {tag}")
