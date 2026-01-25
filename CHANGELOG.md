@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.14.2 (2026-01-25)
+
+### Fix
+
+- **ci**: detect actual version change before publishing
+- **deps**: update pragmatiks-sdk to v0.15.4
+
 ## v0.14.1 (2026-01-25)
 
 ### Fix
