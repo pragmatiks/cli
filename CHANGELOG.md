@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.3 (2026-01-25)
+
+### Fix
+
+- **deps**: update pragmatiks-sdk to v0.15.5
+
 ## v0.14.2 (2026-01-25)
 
 ### Fix
