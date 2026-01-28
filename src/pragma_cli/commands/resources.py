@@ -35,18 +35,14 @@ def _format_api_error(error: httpx.HTTPStatusError) -> str:
     try:
         detail = error.response.json().get("detail", {})
     except (json.JSONDecodeError, ValueError):
-        # Fall back to plain text if not JSON
         return error.response.text or str(error)
 
-    # Handle simple string details
     if isinstance(detail, str):
         return detail
 
-    # Handle structured error responses
     message = detail.get("message", str(error))
     parts = [message]
 
-    # DependencyValidationError details
     if missing := detail.get("missing_dependencies"):
         parts.append("\n  Missing dependencies:")
         for dep_id in missing:
@@ -59,7 +55,6 @@ def _format_api_error(error: httpx.HTTPStatusError) -> str:
             else:
                 parts.append(f"    - {item}")
 
-    # FieldReferenceError details
     if field := detail.get("field"):
         ref_parts = [
             detail.get("reference_provider", ""),
@@ -70,13 +65,11 @@ def _format_api_error(error: httpx.HTTPStatusError) -> str:
         if ref_id:
             parts.append(f"\n  Reference: {ref_id}#{field}")
 
-    # InvalidLifecycleTransitionError details
     if current_state := detail.get("current_state"):
         target_state = detail.get("target_state", "unknown")
         parts.append(f"\n  Current state: {current_state}")
         parts.append(f"  Target state: {target_state}")
 
-    # ResourceInProcessingError details
     if resource_id := detail.get("resource_id"):
         parts.append(f"\n  Resource: {resource_id}")
 
@@ -237,13 +230,11 @@ def _print_resources_table(resources: list[dict]) -> None:
     table.add_column("State")
     table.add_column("Updated")
 
-    # Track failed resources to show errors after table
     failed_resources: list[tuple[str, str]] = []
 
     for res in resources:
         state = _format_state_color(res["lifecycle_state"])
         updated = res.get("updated_at")
-        # Truncate to datetime portion if present
         if updated:
             updated = updated[:19].replace("T", " ")
         else:
@@ -257,14 +248,12 @@ def _print_resources_table(resources: list[dict]) -> None:
             updated,
         )
 
-        # Track failed resources for error display
         if res.get("lifecycle_state") == "failed" and res.get("error"):
             resource_id = f"{res['provider']}/{res['resource']}/{res['name']}"
             failed_resources.append((resource_id, res["error"]))
 
     console.print(table)
 
-    # Show errors for failed resources below the table
     for resource_id, error in failed_resources:
         console.print(f"  [red]{resource_id}:[/red] {escape(error)}")
 
@@ -320,10 +309,8 @@ def _format_config_value(value, *, redact_keys: set[str] | None = None) -> str:
     """
     redact_keys = redact_keys or {"credentials", "password", "secret", "token", "key", "data"}
     if isinstance(value, dict):
-        # Check if this is a FieldReference
         if "provider" in value and "resource" in value and "name" in value and "field" in value:
             return f"{value['provider']}/{value['resource']}/{value['name']}#{value['field']}"
-        # Recursively format nested dicts
         formatted = {}
         for k, v in value.items():
             if k.lower() in redact_keys:
@@ -344,19 +331,15 @@ def _print_resource_details(res: dict) -> None:
     console.print(f"[bold]Resource:[/bold] {resource_id}")
     console.print()
 
-    # Main properties table
     table = Table(show_header=True, header_style="bold")
     table.add_column("Property")
     table.add_column("Value")
 
-    # State with color
     table.add_row("State", _format_state_color(res["lifecycle_state"]))
 
-    # Error if failed
     if res.get("error"):
         table.add_row("Error", f"[red]{escape(res['error'])}[/red]")
 
-    # Timestamps
     if res.get("created_at"):
         table.add_row("Created", res["created_at"])
     if res.get("updated_at"):
@@ -364,7 +347,6 @@ def _print_resource_details(res: dict) -> None:
 
     console.print(table)
 
-    # Config section
     config = res.get("config", {})
     if config:
         console.print()
@@ -373,7 +355,6 @@ def _print_resource_details(res: dict) -> None:
             formatted = _format_config_value(value)
             console.print(f"  {key}: {formatted}")
 
-    # Outputs section
     outputs = res.get("outputs", {})
     if outputs:
         console.print()
@@ -381,7 +362,6 @@ def _print_resource_details(res: dict) -> None:
         for key, value in outputs.items():
             console.print(f"  {key}: {value}")
 
-    # Dependencies section
     dependencies = res.get("dependencies", [])
     if dependencies:
         console.print()
@@ -390,7 +370,6 @@ def _print_resource_details(res: dict) -> None:
             dep_id = f"{dep['provider']}/{dep['resource']}/{dep['name']}"
             console.print(f"  - {dep_id}")
 
-    # Tags section
     tags = res.get("tags", [])
     if tags:
         console.print()
@@ -488,7 +467,6 @@ def delete(
         raise typer.Exit(1)
 
 
-# Tags subcommand group
 tags_app = typer.Typer()
 app.add_typer(tags_app, name="tags", help="Manage resource tags.")
 
