@@ -58,7 +58,6 @@ def set_context(
     config.contexts[name] = ContextConfig(api_url=api_url, auth_url=auth_url)
     save_config(config)
 
-    # Show the effective auth URL
     effective_auth = config.contexts[name].get_auth_url()
     print(f"[green]\u2713[/green] Context '{name}' configured")
     print(f"  API URL:  {api_url}")

@@ -165,7 +165,6 @@ def list_providers(
     if output == OutputFormat.TABLE:
         _print_providers_table(providers)
     else:
-        # Convert Pydantic models to dicts for JSON/YAML output
         data = [p.model_dump(mode="json") for p in providers]
         output_data(data, output)
 
@@ -279,7 +278,6 @@ def init(
     typer.echo("")
 
     try:
-        # Use HEAD when running from local path (development) to pick up uncommitted changes
         vcs_ref = "HEAD" if not template_source.startswith("gh:") else None
         copier.run_copy(
             src_path=template_source,
@@ -827,7 +825,6 @@ def status(
     if output == OutputFormat.TABLE:
         _print_deployment_status(provider_id, result)
     else:
-        # Convert Pydantic model to dict for JSON/YAML output
         data = result.model_dump(mode="json")
         data["provider_id"] = provider_id  # Include provider_id in output
         output_data(data, output)

@@ -179,7 +179,6 @@ def login(
     """
     config = load_config()
 
-    # Use current context if not specified
     if context is None:
         context = config.current_context
 
