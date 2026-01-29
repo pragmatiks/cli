@@ -44,12 +44,21 @@ jobs:
         run: uv sync --no-sources --all-groups
 
       - name: Commit and push
+        id: commit
         run: |
           git add .
           if git diff --staged --quiet; then
             echo "No changes to commit"
+            echo "pushed=false" >> $GITHUB_OUTPUT
           else
             git commit -m "fix(deps): update pragmatiks-sdk to v${{ inputs.sdk_version }}"
             git pull --rebase
             git push
+            echo "pushed=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Trigger publish workflow
+        if: steps.commit.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run publish.yaml
