@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.15.1 (2026-01-31)
+
+### Fix
+
+- move httpx import to top of file
+
 ## v0.15.0 (2026-01-31)
 
 ### Feat
