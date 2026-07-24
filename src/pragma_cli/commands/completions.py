@@ -73,12 +73,12 @@ def completion_resource_ids(ctx: click.Context, incomplete: str):
     if client is None:
         return
 
-    project_slug = resolve_project_or_none(ctx)
-    if project_slug is None:
+    project_id = resolve_project_or_none(ctx)
+    if project_id is None:
         return
 
     try:
-        project = client.project(project_slug)
+        project = client.project(project_id)
     except Exception:
         return
 

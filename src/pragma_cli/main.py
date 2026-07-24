@@ -267,7 +267,7 @@ def main(
         typer.Option(
             "--project",
             help=(
-                "Project slug for project-scoped resource commands. Precedence: --project, "
+                "Project ID for project-scoped resource commands. Precedence: --project, "
                 "PRAGMA_PROJECT, current context config, then 'pragma projects use'."
             ),
         ),

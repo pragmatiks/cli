@@ -11,12 +11,12 @@ from pragma_cli.config import MalformedConfigError, get_current_context
 
 
 _MISSING_PROJECT_MESSAGE = (
-    "No project context set. Pass --project, set PRAGMA_PROJECT, or run 'pragma projects use <slug>'."
+    "No project context set. Pass --project, set PRAGMA_PROJECT, or run 'pragma projects use <project-id>'."
 )
 
 
-def _resolve_project_slug(typer_ctx: typer.Context | click.Context | None) -> str | None:
-    """Resolve the active project slug without emitting errors.
+def _resolve_project_id(typer_ctx: typer.Context | click.Context | None) -> str | None:
+    """Resolve the active project ID without emitting errors.
 
     Precedence:
         1. Global ``--project`` flag (from ``ctx.obj`` when the root
@@ -35,7 +35,7 @@ def _resolve_project_slug(typer_ctx: typer.Context | click.Context | None) -> st
         typer_ctx: Active Typer or Click context.
 
     Returns:
-        Resolved project slug, or ``None`` if nothing is configured.
+        Resolved project ID, or ``None`` if nothing is configured.
     """
     root_ctx = typer_ctx.find_root() if typer_ctx is not None else None
     root_obj = root_ctx.obj if root_ctx is not None and isinstance(root_ctx.obj, dict) else {}
@@ -66,7 +66,7 @@ def _resolve_project_slug(typer_ctx: typer.Context | click.Context | None) -> st
 
 
 def resolve_project(typer_ctx: typer.Context | click.Context | None) -> str:
-    """Resolve the active project slug from CLI flag, env var, or config.
+    """Resolve the active project ID from CLI flag, env var, or config.
 
     Intended for real command execution: emits a CLI error and exits
     with code 2 when no project can be resolved.
@@ -75,12 +75,12 @@ def resolve_project(typer_ctx: typer.Context | click.Context | None) -> str:
         typer_ctx: Active Typer or Click context.
 
     Returns:
-        Resolved project slug.
+        Resolved project ID.
 
     Raises:
         typer.Exit: If no project context is configured.
     """
-    project = _resolve_project_slug(typer_ctx)
+    project = _resolve_project_id(typer_ctx)
     if project is not None:
         return project
 
@@ -89,7 +89,7 @@ def resolve_project(typer_ctx: typer.Context | click.Context | None) -> str:
 
 
 def resolve_project_or_none(typer_ctx: typer.Context | click.Context | None) -> str | None:
-    """Resolve the active project slug without side effects.
+    """Resolve the active project ID without side effects.
 
     Intended for shell completion callbacks: never prints to stderr,
     never raises ``typer.Exit``. Returns ``None`` when no project can
@@ -99,6 +99,6 @@ def resolve_project_or_none(typer_ctx: typer.Context | click.Context | None) -> 
         typer_ctx: Active Typer or Click context.
 
     Returns:
-        Resolved project slug, or ``None`` if nothing is configured.
+        Resolved project ID, or ``None`` if nothing is configured.
     """
-    return _resolve_project_slug(typer_ctx)
+    return _resolve_project_id(typer_ctx)

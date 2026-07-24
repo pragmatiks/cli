@@ -63,7 +63,7 @@ def _resource_payload(resource: dict[str, Any], project_id: str) -> _ScopedResou
 
     Args:
         resource: Resource document loaded from CLI input.
-        project_id: Resolved project slug for the active command.
+        project_id: Resolved project ID for the active command.
 
     Returns:
         Validated project-scoped payload ready for SDK submission.
@@ -686,7 +686,7 @@ def list_resources(
 
     Requires a project context. Precedence: ``--project`` flag,
     ``PRAGMA_PROJECT`` env var, then the persistent default set via
-    ``pragma projects use <slug>``. Results can be filtered by
+    ``pragma projects use <project-id>``. Results can be filtered by
     provider, resource type, or tags.
 
     Examples:
@@ -755,7 +755,7 @@ def get(
     """Get resources by type or specific resource by full ID.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
-    or the persistent default set via ``pragma projects use <slug>``.
+    or the persistent default set via ``pragma projects use <project-id>``.
     With three segments (org/provider/resource), lists all resources of
     that type within the project. With four segments
     (org/provider/resource/name), fetches a specific resource.
@@ -965,7 +965,7 @@ def describe(
     """Show detailed information about a resource.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
-    or the persistent default set via ``pragma projects use <slug>``.
+    or the persistent default set via ``pragma projects use <project-id>``.
     Displays the resource's config, outputs, dependencies, and error
     messages. Sensitive fields are redacted by default; use --reveal
     to show their values.
@@ -1010,7 +1010,7 @@ def _plan_apply_batch(
 
     Args:
         files: YAML files supplied on the command line.
-        project_id: Resolved project slug for the active command.
+        project_id: Resolved project ID for the active command.
         draft: When False, injects ``lifecycle_state=pending``.
 
     Returns:
@@ -1174,7 +1174,7 @@ def _execute_plan(plan: _ApplyPlan, project_id: str) -> None:
 
     Args:
         plan: Plan returned by ``_plan_apply_batch``.
-        project_id: Resolved project slug.
+        project_id: Resolved project ID.
 
     Raises:
         typer.Exit: With code 1 on any apply or upload failure, after
@@ -1322,7 +1322,7 @@ def delete(
     """Delete resources by ID or from YAML files.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
-    or the persistent default set via ``pragma projects use <slug>``.
+    or the persistent default set via ``pragma projects use <project-id>``.
 
     Usage:
         pragma resources delete <org/provider/resource/name>
@@ -1400,7 +1400,7 @@ def deactivate(
     """Deactivate resources by ID or from YAML files.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
-    or the persistent default set via ``pragma projects use <slug>``.
+    or the persistent default set via ``pragma projects use <project-id>``.
 
     Usage:
         pragma resources deactivate <org/provider/resource/name>
@@ -1537,7 +1537,7 @@ def tags_list(
     """List tags for a resource.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
-    or the persistent default set via ``pragma projects use <slug>``.
+    or the persistent default set via ``pragma projects use <project-id>``.
 
     Examples:
         pragma resources tags list pragmatiks/gcp/secret/my-secret
@@ -1562,7 +1562,7 @@ def tags_add(
     """Add tags to a resource.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
-    or the persistent default set via ``pragma projects use <slug>``.
+    or the persistent default set via ``pragma projects use <project-id>``.
 
     Examples:
         pragma resources tags add pragmatiks/gcp/secret/my-secret --tag production
@@ -1599,7 +1599,7 @@ def tags_remove(
     """Remove tags from a resource.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
-    or the persistent default set via ``pragma projects use <slug>``.
+    or the persistent default set via ``pragma projects use <project-id>``.
 
     Examples:
         pragma resources tags remove pragmatiks/gcp/secret/my-secret --tag staging

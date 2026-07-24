@@ -55,18 +55,16 @@ def _print_projects_table(projects: list[dict]) -> None:
         projects: Project payloads to display.
     """
     table = Table(show_header=True, header_style="bold")
-    table.add_column("Slug")
+    table.add_column("ID")
     table.add_column("Name")
     table.add_column("Organization ID")
-    table.add_column("Private")
     table.add_column("Updated")
 
     for project in projects:
         table.add_row(
-            project["slug"],
+            project["project_id"],
             project["name"],
             project["organization_id"],
-            "yes" if project["is_private"] else "no",
             project["updated_at"],
         )
 
@@ -85,11 +83,9 @@ def _print_project_detail(projects: list[dict]) -> None:
     table.add_column("Field", style="bold")
     table.add_column("Value")
 
-    table.add_row("ID", project["id"])
-    table.add_row("Slug", project["slug"])
+    table.add_row("ID", project["project_id"])
     table.add_row("Name", project["name"])
     table.add_row("Organization ID", project["organization_id"])
-    table.add_row("Private", "yes" if project["is_private"] else "no")
     table.add_row("Created", project["created_at"])
     table.add_row("Updated", project["updated_at"])
 
@@ -161,42 +157,41 @@ def list_projects(
 
 @app.command("get")
 def get_project(
-    slug: Annotated[str, typer.Argument(help="Project slug")],
+    project_id: Annotated[str, typer.Argument(help="Project ID")],
     output: Annotated[OutputFormat, typer.Option("--output", "-o", help="Output format")] = OutputFormat.TABLE,
 ) -> None:
-    """Get a project by slug."""
-    project = get_client().get_project(slug)
+    """Get a project by ID."""
+    project = get_client().get_project(project_id)
     output_data([_project_payload(project)], output, table_renderer=_print_project_detail)
 
 
 @app.command("create")
 def create_project(
-    slug: Annotated[str, typer.Argument(help="Project slug")],
-    name: Annotated[str, typer.Option("--name", help="Human-readable project name")],
+    name: Annotated[str, typer.Argument(help="Human-readable project name")],
 ) -> None:
     """Create a project."""
-    project = get_client().create_project(CreateProjectRequest(name=name, slug=slug))
-    console.print(f"[green]Created project:[/green] {project.slug}")
+    project = get_client().create_project(CreateProjectRequest(name=name))
+    console.print(f"[green]Created project:[/green] {project.name} ({project.project_id})")
 
 
 @app.command("update")
 def update_project(
-    slug: Annotated[str, typer.Argument(help="Project slug")],
+    project_id: Annotated[str, typer.Argument(help="Project ID")],
     name: Annotated[str, typer.Option("--name", help="Human-readable project name")],
 ) -> None:
     """Update project metadata."""
-    project = get_client().update_project(slug, UpdateProjectRequest(name=name))
-    console.print(f"[green]Updated project:[/green] {project.slug}")
+    project = get_client().update_project(project_id, UpdateProjectRequest(name=name))
+    console.print(f"[green]Updated project:[/green] {project.name} ({project.project_id})")
 
 
-def _print_orphan_warning(slug: str) -> None:
+def _print_orphan_warning(name: str) -> None:
     """Warn the caller that ``--orphan-resources`` leaves real infrastructure running.
 
     Args:
-        slug: Slug of the project about to be deleted.
+        name: Name of the project about to be deleted.
     """
     console.print(
-        f"[yellow]Warning:[/yellow] --orphan-resources will delete project [bold]{slug}[/bold] from Pragma only."
+        f"[yellow]Warning:[/yellow] --orphan-resources will delete project [bold]{name}[/bold] from Pragma only."
     )
     console.print(
         "[dim]The underlying infrastructure (kubernetes pods, Supabase projects, "
@@ -272,7 +267,7 @@ def _resolve_confirmation(yes: bool, confirm: str | None) -> str:
     """
     if yes:
         if confirm is None:
-            console.print("[red]Error:[/red] --confirm <slug> is required with --yes.")
+            console.print("[red]Error:[/red] --confirm <name> is required with --yes.")
             raise typer.Exit(2)
         return confirm
 
@@ -280,12 +275,12 @@ def _resolve_confirmation(yes: bool, confirm: str | None) -> str:
         console.print("[red]Error:[/red] --confirm can only be used together with --yes.")
         raise typer.Exit(2)
 
-    return typer.prompt("Type the project slug to confirm deletion: ")
+    return typer.prompt("Type the project name to confirm deletion: ")
 
 
 @app.command("delete")
 def delete_project(
-    slug: Annotated[str, typer.Argument(help="Project slug")],
+    project_id: Annotated[str, typer.Argument(help="Project ID")],
     yes: Annotated[bool, typer.Option("--yes", help="Skip the interactive confirmation prompt")] = False,
     confirm: Annotated[str | None, typer.Option("--confirm", help="Typed confirmation value")] = None,
     orphan_resources: Annotated[
@@ -297,7 +292,7 @@ def delete_project(
         ),
     ] = False,
 ) -> None:
-    """Delete a project with typed confirmation.
+    """Delete a project with typed confirmation of its name.
 
     By default the server refuses to delete a project that still contains
     resources. Pass ``--orphan-resources`` to remove Pragma's tracking
@@ -307,18 +302,21 @@ def delete_project(
         typer.Exit: If confirmation flags are invalid, confirmation does not
             match, or the server refuses the delete because resources remain.
     """
+    client = get_client()
+    project = client.get_project(project_id)
+
     if orphan_resources and not yes:
-        _print_orphan_warning(slug)
+        _print_orphan_warning(project.name)
 
     confirmation = _resolve_confirmation(yes, confirm)
 
-    if confirmation != slug:
-        console.print("[red]Error:[/red] Confirmation did not match project slug.")
+    if confirmation != project.name:
+        console.print("[red]Error:[/red] Confirmation did not match project name.")
         raise typer.Exit(1)
 
     try:
-        get_client().delete_project(
-            slug,
+        client.delete_project(
+            project_id,
             DeleteProjectRequest(confirmation=confirmation, orphan_resources=orphan_resources),
         )
     except ProjectHasResourcesError as error:
@@ -326,21 +324,21 @@ def delete_project(
         raise typer.Exit(1) from error
 
     if orphan_resources:
-        console.print(f"[green]Deleted project tracking:[/green] {slug}")
+        console.print(f"[green]Deleted project tracking:[/green] {project.name}")
         console.print("[dim]Resources were not touched and continue to run outside Pragma.[/dim]")
     else:
-        console.print(f"[green]Deleted project:[/green] {slug}")
+        console.print(f"[green]Deleted project:[/green] {project.name}")
 
 
 @app.command("use")
 def use_project(
     ctx: typer.Context,
-    slug: Annotated[str, typer.Argument(help="Project slug")],
+    project_id: Annotated[str, typer.Argument(help="Project ID")],
 ) -> None:
     """Persist the default project on the current CLI context.
 
     Honors the global ``--context``/``-c`` flag so that
-    ``pragma -c staging projects use <slug>`` writes to the staging
+    ``pragma -c staging projects use <project-id>`` writes to the staging
     context instead of the persistent current context.
 
     Raises:
@@ -353,9 +351,9 @@ def use_project(
             console.print(f"[red]Error:[/red] Context '{context_name}' not found in configuration.")
             raise typer.Exit(2)
 
-        config.contexts[context_name].project = slug
+        config.contexts[context_name].project = project_id
 
-    console.print(f"[green]Current project for context '{context_name}':[/green] {slug}")
+    console.print(f"[green]Current project for context '{context_name}':[/green] {project_id}")
 
 
 @app.command("current")
