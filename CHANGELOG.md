@@ -1,5 +1,15 @@
 # Changelog
 
+## v8.0.0 (2026-07-24)
+
+### Feat
+
+- move projects commands to ID-based identity
+
+### Fix
+
+- **deps**: update pragmatiks-sdk to v11.0.0 (#73)
+
 ## v7.0.1 (2026-07-23)
 
 ### Fix
