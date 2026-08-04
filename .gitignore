@@ -17,6 +17,3 @@ build/
 .claude/scheduled_tasks.lock
 .claude/worktrees/
 .claude/plans/
-
-# graphify
-graphify-out/
