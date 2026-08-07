@@ -1,5 +1,11 @@
 # Changelog
 
+## v8.0.1 (2026-08-07)
+
+### Fix
+
+- **resources**: drop dead not_ready_dependencies error branch
+
 ## v8.0.0 (2026-07-24)
 
 ### Feat
