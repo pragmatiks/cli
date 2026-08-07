@@ -278,13 +278,6 @@ def _format_api_error(error: httpx.HTTPStatusError) -> str:
         parts.append("\n  Missing dependencies:")
         for dep_id in missing:
             parts.append(f"    - {dep_id}")
-    if not_ready := detail.get("not_ready_dependencies"):
-        parts.append("\n  Dependencies not ready:")
-        for item in not_ready:
-            if isinstance(item, dict):
-                parts.append(f"    - {item['id']} (state: {item['state']})")
-            else:
-                parts.append(f"    - {item}")
 
     if field := detail.get("field"):
         ref_parts = [
