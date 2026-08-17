@@ -13,7 +13,7 @@ import httpx
 import jsonschema
 import typer
 import yaml
-from pragma_sdk import ProjectMismatchError
+from pragma_sdk import ProjectMismatchError, ProjectResources, ResourceFailedError
 from pydantic import BaseModel, ConfigDict, ValidationError
 from rich import print
 from rich.console import Console
@@ -1389,42 +1389,82 @@ def deactivate(
         list[typer.FileText] | None,
         typer.Option("--file", "-f", help="YAML file(s) defining resources to deactivate."),
     ] = None,
+    wait: Annotated[
+        bool,
+        typer.Option("--wait", help="Wait for teardown to finish and the resource to return to draft."),
+    ] = False,
 ):
     """Deactivate resources by ID or from YAML files.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
     or the persistent default set via ``pragma projects use <project-id>``.
 
+    Teardown runs asynchronously: the command returns as soon as
+    Pragmatiks accepts the request unless ``--wait`` is passed.
+
     Usage:
         pragma resources deactivate <org/provider/resource/name>
         pragma resources deactivate -f <file.yaml>
+        pragma resources deactivate --wait <org/provider/resource/name>
 
     Raises:
         typer.Exit: If arguments are invalid or deactivation fails.
     """
     if file:
-        _deactivate_from_files(ctx, file)
+        _deactivate_from_files(ctx, file, wait=wait)
     elif resource_id:
-        _deactivate_single(ctx, resource_id)
+        _deactivate_single(ctx, resource_id, wait=wait)
     else:
         console.print("[red]Provide either -f <file> or <org/provider/resource/name>.[/red]")
         raise typer.Exit(1)
 
 
-def _deactivate_single(ctx: typer.Context, resource_id: str) -> None:
+DEACTIVATION_STARTED = "Deactivating {} — teardown is in progress; the resource returns to draft when it completes."
+
+
+def _wait_deactivated(project: ProjectResources, provider: str, resource: str, name: str, resource_id: str) -> None:
+    """Block until a deactivating resource reaches draft.
+
+    Args:
+        project: Project-scoped SDK handle.
+        provider: Provider that manages the resource.
+        resource: Resource type name.
+        name: Resource instance name.
+        resource_id: Full resource identifier shown to the user.
+
+    Raises:
+        typer.Exit: With code 1 if teardown fails or does not finish in time.
+    """
+    try:
+        project.wait_deactivated(provider=provider, resource=resource, name=name)
+    except ResourceFailedError as e:
+        console.print(f"[red]Error deactivating {resource_id}:[/red] {e.error or e}")
+        raise typer.Exit(1) from e
+    except TimeoutError as e:
+        console.print(f"[red]Error deactivating {resource_id}:[/red] Teardown did not complete in time ({e}).")
+        raise typer.Exit(1) from e
+
+    print(f"Deactivated {resource_id}")
+
+
+def _deactivate_single(ctx: typer.Context, resource_id: str, *, wait: bool) -> None:
     project = _project_client(ctx)
     provider, resource, name = _parse_resource_id(resource_id)
 
     try:
         project.deactivate_resource(provider=provider, resource=resource, name=name)
-        print(f"Deactivated {resource_id}")
     except httpx.HTTPStatusError as e:
         check_bootstrap_error(e)
         console.print(f"[red]Error deactivating {resource_id}:[/red] {_format_api_error(e)}")
         raise typer.Exit(1) from e
 
+    print(DEACTIVATION_STARTED.format(resource_id))
 
-def _deactivate_from_files(ctx: typer.Context, files: list[typer.FileText]) -> None:
+    if wait:
+        _wait_deactivated(project, provider, resource, name, resource_id)
+
+
+def _deactivate_from_files(ctx: typer.Context, files: list[typer.FileText], *, wait: bool) -> None:
     project = _project_client(ctx)
 
     for f in files:
@@ -1450,11 +1490,15 @@ def _deactivate_from_files(ctx: typer.Context, files: list[typer.FileText]) -> N
 
             try:
                 project.deactivate_resource(provider=provider, resource=resource_type, name=name)
-                print(f"Deactivated {res_id}")
             except httpx.HTTPStatusError as e:
                 check_bootstrap_error(e)
                 console.print(f"[red]Error deactivating {res_id}:[/red] {_format_api_error(e)}")
                 raise typer.Exit(1) from e
+
+            print(DEACTIVATION_STARTED.format(res_id))
+
+            if wait:
+                _wait_deactivated(project, provider, resource_type, name, res_id)
 
 
 tags_app = typer.Typer()
