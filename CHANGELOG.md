@@ -1,5 +1,15 @@
 # Changelog
 
+## v8.1.0 (2026-08-17)
+
+### Feat
+
+- **resources**: --wait flag on deactivate
+
+### Fix
+
+- **ci**: pin setup-uv to v9.0.0
+
 ## v8.0.1 (2026-08-07)
 
 ### Fix
