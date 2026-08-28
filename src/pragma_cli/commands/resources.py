@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -13,7 +14,7 @@ import httpx
 import jsonschema
 import typer
 import yaml
-from pragma_sdk import ProjectMismatchError, ProjectResources, ResourceFailedError
+from pragma_sdk import LifecycleState, ProjectMismatchError, ProjectResources, ResourceFailedError, TeardownImpact
 from pydantic import BaseModel, ConfigDict, ValidationError
 from rich import print
 from rich.console import Console
@@ -25,6 +26,7 @@ from pragma_cli.bootstrap_errors import check_bootstrap_error
 from pragma_cli.commands.completions import completion_resource_ids
 from pragma_cli.helpers import OutputFormat, output_data, parse_resource_id
 from pragma_cli.project_context import resolve_project
+from pragma_cli.teardown import DEFAULT_WAIT_TIMEOUT_SECONDS, TeardownOptions, print_impact, watch_teardown
 
 
 console = Console()
@@ -1301,6 +1303,55 @@ def _needs_upload(plan: _ApplyPlan, resource_id: str) -> bool:
     return False
 
 
+DEACTIVATION_STARTED = "Deactivating {} — teardown is in progress; the resource returns to draft when it completes."
+DELETION_STARTED = "Deleting {} — the resource and everything it owns are removed when this completes."
+
+WAIT_HELP = "Wait for teardown to finish before returning."
+WAIT_TIMEOUT_HELP = "Seconds to wait when --wait is passed; 0 waits forever."
+DRY_RUN_HELP = "Preview the teardown and the resources it reaches without changing anything."
+
+
+def _iter_resource_documents(files: list[typer.FileText]) -> Iterator[tuple[str, str, str]]:
+    """Yield the addressing fields of every resource document across the supplied files.
+
+    Args:
+        files: YAML files supplied on the command line.
+
+    Yields:
+        Tuple of (provider, resource, name) where provider is 'org/provider'.
+
+    Raises:
+        typer.Exit: If a file contains invalid YAML.
+    """
+    for f in files:
+        try:
+            documents = list(yaml.safe_load_all(f.read()))
+        except yaml.YAMLError as e:
+            console.print(f"[red]Error:[/red] Invalid YAML in {f.name}: {e}")
+            raise typer.Exit(1) from e
+
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+
+            provider = document.get("provider")
+            resource_type = document.get("resource")
+            name = document.get("name")
+
+            if not (
+                isinstance(provider, str)
+                and isinstance(resource_type, str)
+                and isinstance(name, str)
+                and provider
+                and resource_type
+                and name
+            ):
+                console.print(f"[red]Skipping invalid resource (missing provider, resource, or name):[/red] {document}")
+                continue
+
+            yield provider, resource_type, name
+
+
 @app.command()
 def delete(
     ctx: typer.Context,
@@ -1311,72 +1362,108 @@ def delete(
         list[typer.FileText] | None,
         typer.Option("--file", "-f", help="YAML file(s) defining resources to delete."),
     ] = None,
+    wait: Annotated[bool, typer.Option("--wait", help=WAIT_HELP)] = False,
+    wait_timeout: Annotated[
+        float, typer.Option("--wait-timeout", min=0, help=WAIT_TIMEOUT_HELP)
+    ] = DEFAULT_WAIT_TIMEOUT_SECONDS,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help=DRY_RUN_HELP)] = False,
 ):
     """Delete resources by ID or from YAML files.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
     or the persistent default set via ``pragma projects use <project-id>``.
 
+    Removal cascades into everything the resource owns and runs
+    asynchronously: the command returns as soon as Pragmatiks accepts the
+    request unless ``--wait`` is passed. With ``--wait`` the cascade is
+    reported one resource at a time as it completes.
+
     Usage:
         pragma resources delete <org/provider/resource/name>
         pragma resources delete -f <file.yaml>
+        pragma resources delete --wait --wait-timeout 900 <org/provider/resource/name>
+        pragma resources delete --dry-run <org/provider/resource/name>
 
     Raises:
         typer.Exit: If arguments are invalid or deletion fails.
     """
+    options = TeardownOptions(wait=wait, wait_timeout=wait_timeout, dry_run=dry_run)
+
     if file:
-        _delete_from_files(ctx, file)
+        project = _project_client(ctx)
+        for provider, resource, name in _iter_resource_documents(file):
+            _delete_one(project, provider, resource, name, options)
     elif resource_id:
-        _delete_single(ctx, resource_id)
+        provider, resource, name = _parse_resource_id(resource_id)
+        _delete_one(_project_client(ctx), provider, resource, name, options)
     else:
         console.print("[red]Provide either -f <file> or <org/provider/resource/name>.[/red]")
         raise typer.Exit(1)
 
 
-def _delete_single(ctx: typer.Context, resource_id: str) -> None:
-    project = _project_client(ctx)
-    provider, resource, name = _parse_resource_id(resource_id)
+def _delete_one(project: ProjectResources, provider: str, resource: str, name: str, options: TeardownOptions) -> None:
+    """Remove one resource, reporting everything the removal reaches.
+
+    Args:
+        project: Project-scoped SDK handle.
+        provider: Provider that manages the resource, as 'org/provider'.
+        resource: Resource type name.
+        name: Resource instance name.
+        options: Wait and dry-run behaviour for this command.
+
+    Raises:
+        typer.Exit: With code 1 if the removal is rejected, fails, or does
+            not finish within the wait timeout.
+    """
+    resource_id = f"{provider}/{resource}/{name}"
 
     try:
-        project.delete_resource(provider=provider, resource=resource, name=name)
-        print(f"Deleted {resource_id}")
+        response = project.delete_resource(provider=provider, resource=resource, name=name, dry_run=options.dry_run)
     except httpx.HTTPStatusError as e:
         check_bootstrap_error(e)
         console.print(f"[red]Error deleting {resource_id}:[/red] {_format_api_error(e)}")
         raise typer.Exit(1) from e
 
+    if options.dry_run:
+        print(f"Dry run — {resource_id} was not removed.")
+        print_impact(response.impact)
+        return
 
-def _delete_from_files(ctx: typer.Context, files: list[typer.FileText]) -> None:
-    project = _project_client(ctx)
+    print(DELETION_STARTED.format(resource_id))
+    print_impact(response.impact)
 
-    for f in files:
-        try:
-            resources = list(yaml.safe_load_all(f.read()))
-        except yaml.YAMLError as e:
-            console.print(f"[red]Error:[/red] Invalid YAML in {f.name}: {e}")
-            raise typer.Exit(1) from e
+    if options.wait:
+        _wait_removed(project, response.impact, resource_id, options.wait_timeout)
 
-        for resource in resources:
-            if not isinstance(resource, dict):
-                continue
 
-            provider = resource.get("provider")
-            resource_type = resource.get("resource")
-            name = resource.get("name")
+def _wait_removed(project: ProjectResources, impact: list[TeardownImpact], resource_id: str, timeout: float) -> None:
+    """Block until a removal cascade finishes, reporting each resource as it goes.
 
-            if not all([provider, resource_type, name]):
-                console.print(f"[red]Skipping invalid resource (missing provider, resource, or name):[/red] {resource}")
-                continue
+    Args:
+        project: Project-scoped SDK handle.
+        impact: Impact rows returned by the removal.
+        resource_id: Full resource identifier shown to the user.
+        timeout: Seconds to wait before giving up; ``0`` waits forever.
 
-            res_id = f"{provider}/{resource_type}/{name}"
+    Raises:
+        typer.Exit: With code 1 if teardown fails or does not finish in time.
+    """
+    try:
+        watch_teardown(project, impact, timeout=timeout)
+    except ResourceFailedError as e:
+        console.print(
+            f"[red]Error deleting {resource_id}:[/red] {e.error or e}. "
+            f"Run 'pragma resources describe {e.resource_id}' to see the current state, then try again."
+        )
+        raise typer.Exit(1) from e
+    except TimeoutError as e:
+        console.print(
+            f"[red]Error deleting {resource_id}:[/red] Removal is still running after {timeout}s. "
+            "Run 'pragma resources list' to see what is left."
+        )
+        raise typer.Exit(1) from e
 
-            try:
-                project.delete_resource(provider=provider, resource=resource_type, name=name)
-                print(f"Deleted {res_id}")
-            except httpx.HTTPStatusError as e:
-                check_bootstrap_error(e)
-                console.print(f"[red]Error deleting {res_id}:[/red] {_format_api_error(e)}")
-                raise typer.Exit(1) from e
+    print(f"Deleted {resource_id}")
 
 
 @app.command()
@@ -1393,112 +1480,112 @@ def deactivate(
         bool,
         typer.Option("--wait", help="Wait for teardown to finish and the resource to return to draft."),
     ] = False,
+    wait_timeout: Annotated[
+        float, typer.Option("--wait-timeout", min=0, help=WAIT_TIMEOUT_HELP)
+    ] = DEFAULT_WAIT_TIMEOUT_SECONDS,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help=DRY_RUN_HELP)] = False,
 ):
     """Deactivate resources by ID or from YAML files.
 
     Resolves the active project from ``--project``, ``PRAGMA_PROJECT``,
     or the persistent default set via ``pragma projects use <project-id>``.
 
-    Teardown runs asynchronously: the command returns as soon as
-    Pragmatiks accepts the request unless ``--wait`` is passed.
+    Teardown cascades into everything the resource owns and runs
+    asynchronously: the command returns as soon as Pragmatiks accepts the
+    request unless ``--wait`` is passed. With ``--wait`` the cascade is
+    reported one resource at a time as it returns to draft.
 
     Usage:
         pragma resources deactivate <org/provider/resource/name>
         pragma resources deactivate -f <file.yaml>
         pragma resources deactivate --wait <org/provider/resource/name>
+        pragma resources deactivate --wait --wait-timeout 0 <org/provider/resource/name>
+        pragma resources deactivate --dry-run <org/provider/resource/name>
 
     Raises:
         typer.Exit: If arguments are invalid or deactivation fails.
     """
+    options = TeardownOptions(wait=wait, wait_timeout=wait_timeout, dry_run=dry_run)
+
     if file:
-        _deactivate_from_files(ctx, file, wait=wait)
+        project = _project_client(ctx)
+        for provider, resource, name in _iter_resource_documents(file):
+            _deactivate_one(project, provider, resource, name, options)
     elif resource_id:
-        _deactivate_single(ctx, resource_id, wait=wait)
+        provider, resource, name = _parse_resource_id(resource_id)
+        _deactivate_one(_project_client(ctx), provider, resource, name, options)
     else:
         console.print("[red]Provide either -f <file> or <org/provider/resource/name>.[/red]")
         raise typer.Exit(1)
 
 
-DEACTIVATION_STARTED = "Deactivating {} — teardown is in progress; the resource returns to draft when it completes."
-
-
-def _wait_deactivated(project: ProjectResources, provider: str, resource: str, name: str, resource_id: str) -> None:
-    """Block until a deactivating resource reaches draft.
+def _deactivate_one(
+    project: ProjectResources, provider: str, resource: str, name: str, options: TeardownOptions
+) -> None:
+    """Deactivate one resource, reporting everything the teardown reaches.
 
     Args:
         project: Project-scoped SDK handle.
-        provider: Provider that manages the resource.
+        provider: Provider that manages the resource, as 'org/provider'.
         resource: Resource type name.
         name: Resource instance name.
-        resource_id: Full resource identifier shown to the user.
+        options: Wait and dry-run behaviour for this command.
 
     Raises:
-        typer.Exit: With code 1 if teardown fails or does not finish in time.
+        typer.Exit: With code 1 if the deactivation is rejected, fails, or
+            does not finish within the wait timeout.
     """
-    try:
-        project.wait_deactivated(provider=provider, resource=resource, name=name)
-    except ResourceFailedError as e:
-        console.print(f"[red]Error deactivating {resource_id}:[/red] {e.error or e}")
-        raise typer.Exit(1) from e
-    except TimeoutError as e:
-        console.print(f"[red]Error deactivating {resource_id}:[/red] Teardown did not complete in time ({e}).")
-        raise typer.Exit(1) from e
-
-    print(f"Deactivated {resource_id}")
-
-
-def _deactivate_single(ctx: typer.Context, resource_id: str, *, wait: bool) -> None:
-    project = _project_client(ctx)
-    provider, resource, name = _parse_resource_id(resource_id)
+    resource_id = f"{provider}/{resource}/{name}"
 
     try:
-        project.deactivate_resource(provider=provider, resource=resource, name=name)
+        response = project.deactivate_resource(provider=provider, resource=resource, name=name, dry_run=options.dry_run)
     except httpx.HTTPStatusError as e:
         check_bootstrap_error(e)
         console.print(f"[red]Error deactivating {resource_id}:[/red] {_format_api_error(e)}")
         raise typer.Exit(1) from e
 
+    if options.dry_run:
+        print(f"Dry run — {resource_id} was not deactivated.")
+        print_impact(response.impact)
+        return
+
     print(DEACTIVATION_STARTED.format(resource_id))
+    print_impact(response.impact)
 
-    if wait:
-        _wait_deactivated(project, provider, resource, name, resource_id)
+    if options.wait:
+        _wait_deactivated(project, response.impact, resource_id, options.wait_timeout)
 
 
-def _deactivate_from_files(ctx: typer.Context, files: list[typer.FileText], *, wait: bool) -> None:
-    project = _project_client(ctx)
+def _wait_deactivated(
+    project: ProjectResources, impact: list[TeardownImpact], resource_id: str, timeout: float
+) -> None:
+    """Block until a deactivation cascade finishes, reporting each resource as it goes.
 
-    for f in files:
-        try:
-            resources = list(yaml.safe_load_all(f.read()))
-        except yaml.YAMLError as e:
-            console.print(f"[red]Error:[/red] Invalid YAML in {f.name}: {e}")
-            raise typer.Exit(1) from e
+    Args:
+        project: Project-scoped SDK handle.
+        impact: Impact rows returned by the deactivation.
+        resource_id: Full resource identifier shown to the user.
+        timeout: Seconds to wait before giving up; ``0`` waits forever.
 
-        for resource in resources:
-            if not isinstance(resource, dict):
-                continue
+    Raises:
+        typer.Exit: With code 1 if teardown fails or does not finish in time.
+    """
+    try:
+        watch_teardown(project, impact, timeout=timeout, settled_state=LifecycleState.DRAFT)
+    except ResourceFailedError as e:
+        console.print(
+            f"[red]Error deactivating {resource_id}:[/red] {e.error or e}. "
+            f"Run 'pragma resources describe {e.resource_id}' to see the current state, then try again."
+        )
+        raise typer.Exit(1) from e
+    except TimeoutError as e:
+        console.print(
+            f"[red]Error deactivating {resource_id}:[/red] Teardown is still running after {timeout}s. "
+            "Re-run with --wait-timeout 0 to keep waiting, or run 'pragma resources list' to see the current state."
+        )
+        raise typer.Exit(1) from e
 
-            provider = resource.get("provider")
-            resource_type = resource.get("resource")
-            name = resource.get("name")
-
-            if not all([provider, resource_type, name]):
-                console.print(f"[red]Skipping invalid resource (missing provider, resource, or name):[/red] {resource}")
-                continue
-
-            res_id = f"{provider}/{resource_type}/{name}"
-
-            try:
-                project.deactivate_resource(provider=provider, resource=resource_type, name=name)
-            except httpx.HTTPStatusError as e:
-                check_bootstrap_error(e)
-                console.print(f"[red]Error deactivating {res_id}:[/red] {_format_api_error(e)}")
-                raise typer.Exit(1) from e
-
-            print(DEACTIVATION_STARTED.format(res_id))
-
-            if wait:
-                _wait_deactivated(project, provider, resource_type, name, res_id)
+    print(f"Deactivated {resource_id}")
 
 
 tags_app = typer.Typer()
