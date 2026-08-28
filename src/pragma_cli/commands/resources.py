@@ -1581,7 +1581,8 @@ def _wait_deactivated(
     except TimeoutError as e:
         console.print(
             f"[red]Error deactivating {resource_id}:[/red] Teardown is still running after {timeout}s. "
-            "Re-run with --wait-timeout 0 to keep waiting, or run 'pragma resources list' to see the current state."
+            f"Run 'pragma resources describe {resource_id}' to follow it; "
+            "the resource returns to draft when teardown completes."
         )
         raise typer.Exit(1) from e
 
