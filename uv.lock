@@ -823,7 +823,7 @@ wheels = [
 
 [[package]]
 name = "pragmatiks-cli"
-version = "9.0.0"
+version = "9.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "copier" },

@@ -1,5 +1,11 @@
 # Changelog
 
+## v9.0.1 (2026-08-28)
+
+### Fix
+
+- deactivate timeout guidance no longer advises a re-run the API refuses mid-teardown
+
 ## v9.0.0 (2026-08-28)
 
 ### BREAKING CHANGE
