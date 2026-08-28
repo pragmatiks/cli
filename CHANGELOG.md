@@ -1,5 +1,21 @@
 # Changelog
 
+## v9.0.0 (2026-08-28)
+
+### BREAKING CHANGE
+
+- a delete without --wait now prints 'Deleting <id> ...' and
+returns immediately; 'Deleted <id>' is only printed after a successful --wait.
+Requires pragmatiks-sdk >=12.0.0.
+
+### Feat
+
+- delete/deactivate --wait, --wait-timeout, --dry-run with cascade impact and progress
+
+### Fix
+
+- **deps**: update pragmatiks-sdk to v12.0.0 (#74)
+
 ## v8.1.0 (2026-08-17)
 
 ### Feat
