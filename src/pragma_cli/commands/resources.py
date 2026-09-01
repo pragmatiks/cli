@@ -810,6 +810,7 @@ def _format_state_color(state: str) -> str:
         "ready": "green",
         "failed": "red",
         "deleting": "dark_orange",
+        "deleted": "dim",
     }
     color = state_colors.get(state.lower(), "white")
     return f"[{color}]{state}[/{color}]"
@@ -1449,7 +1450,7 @@ def _wait_removed(project: ProjectResources, impact: list[TeardownImpact], resou
         typer.Exit: With code 1 if teardown fails or does not finish in time.
     """
     try:
-        watch_teardown(project, impact, timeout=timeout)
+        watch_teardown(project, impact, timeout=timeout, settled_state=LifecycleState.DELETED)
     except ResourceFailedError as e:
         console.print(
             f"[red]Error deleting {resource_id}:[/red] {e.error or e}. "

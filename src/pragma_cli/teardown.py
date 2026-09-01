@@ -56,21 +56,20 @@ def watch_teardown(
     impact: list[TeardownImpact],
     *,
     timeout: float,
-    settled_state: LifecycleState | None = None,
+    settled_state: LifecycleState,
 ) -> None:
     """Block until every resource a teardown tears down has settled, reporting each one.
 
-    A removal takes its rows off the graph, so absence is the only signal it
-    finishes. A deactivation leaves every row it reaches in place and returns it
-    to draft, so ``settled_state`` names the state those rows settle in and
-    absence still counts as settled.
+    Every teardown leaves the rows it reaches in place: a deactivation returns
+    them to draft, a removal leaves them deleted until the archive claims them.
+    ``settled_state`` names the state those rows settle in, and absence — an
+    archive that won the race against the poll — still counts as settled.
 
     Args:
         project: Project-scoped SDK handle.
         impact: Impact rows returned by the deactivate or delete call.
         timeout: Seconds to wait before giving up; ``0`` waits forever.
-        settled_state: State a row the teardown leaves in place settles in;
-            ``None`` when only absence means the row is done.
+        settled_state: State a row the teardown leaves in place settles in.
 
     Raises:
         ResourceFailedError: If a resource the teardown reaches fails.
@@ -84,8 +83,7 @@ def watch_teardown(
         settled = {
             resource_id
             for resource_id in remaining
-            if resource_id not in present
-            or (settled_state is not None and present[resource_id].get("lifecycle_state") == settled_state.value)
+            if resource_id not in present or present[resource_id].get("lifecycle_state") == settled_state.value
         }
 
         for resource_id in sorted(settled):
