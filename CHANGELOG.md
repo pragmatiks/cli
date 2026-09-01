@@ -1,5 +1,20 @@
 # Changelog
 
+## v10.0.0 (2026-09-01)
+
+### BREAKING CHANGE
+
+- requires pragmatiks-sdk >= 13.0.0, whose wait_deleted
+raises on a first-poll 404 instead of returning.
+
+### Feat
+
+- **resources**: settle delete --wait on the deleted lifecycle phase
+
+### Fix
+
+- **deps**: update pragmatiks-sdk to v13.0.0 (#76)
+
 ## v9.0.1 (2026-08-28)
 
 ### Fix
